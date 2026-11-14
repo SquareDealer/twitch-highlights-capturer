@@ -87,7 +87,7 @@ export class Exporter extends EventEmitter {
     const draft = repos.drafts.get(job.draftId);
     const moment = repos.moments.get(job.momentId);
     if (!draft || !moment) throw new Error('Черновик не найден');
-    const session = repos.sessions.get(draft.sessionId) ?? { streamer: 'unknown', streamId: 'unknown', startedAt: draft.createdAt };
+    const session = repos.sessions.get(draft.sessionId) ?? { streamer: 'unknown', streamId: 'unknown', streamTitle: '', startedAt: draft.createdAt };
     const createdAt = this.now();
     const paths = clipPaths(settings.get().libraryDir, session, createdAt, job.title, job.clipId);
     const durationMs = job.trimEndMs - job.trimStartMs;
@@ -101,6 +101,7 @@ export class Exporter extends EventEmitter {
       title: clip.title,
       streamer: session.streamer,
       streamId: session.streamId,
+      streamTitle: session.streamTitle ?? '',
       createdAt: clip.createdAt,
       durationMs,
       sourceEpoch: draft.epoch,

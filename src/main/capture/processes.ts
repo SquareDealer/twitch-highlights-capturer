@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import type { Settings } from '@shared/types';
 
-export type ProbeResult = { live: true; streamId: string } | { live: false; reason: string };
+export type ProbeResult = { live: true; streamId: string; streamTitle?: string } | { live: false; reason: string };
 
 export interface CaptureProcs {
   /** Fires once, when either process exits. */
@@ -41,7 +41,7 @@ export function ffmpegSegmentArgs(epochDir: string, segmentSeconds: number): str
 
 /** Interprets the output of `streamlink --json <url>`. */
 export function parseProbeOutput(stdout: string): ProbeResult {
-  let data: { error?: unknown; metadata?: { id?: unknown } };
+  let data: { error?: unknown; metadata?: { id?: unknown; title?: unknown } };
   try {
     data = JSON.parse(stdout);
   } catch {
@@ -50,7 +50,12 @@ export function parseProbeOutput(stdout: string): ProbeResult {
   if (!data || typeof data !== 'object') return { live: false, reason: 'streamlink вернул неожиданный ответ' };
   if (data.error) return { live: false, reason: String(data.error) };
   const id = data.metadata?.id;
-  return { live: true, streamId: id === undefined || id === null || id === '' ? 'unknown' : String(id) };
+  const title = data.metadata?.title;
+  return {
+    live: true,
+    streamId: id === undefined || id === null || id === '' ? 'unknown' : String(id),
+    streamTitle: typeof title === 'string' ? title.trim().slice(0, 300) : '',
+  };
 }
 
 function run(file: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string; error?: NodeJS.ErrnoException }> {

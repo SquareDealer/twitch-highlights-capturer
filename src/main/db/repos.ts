@@ -68,6 +68,7 @@ const toSession = (r: Row): CaptureSession => ({
   id: r.id as string,
   streamer: r.streamer as string,
   streamId: r.stream_id as string,
+  streamTitle: (r.stream_title as string | null) ?? '',
   state: r.state as CaptureSession['state'],
   startedAt: r.started_at as string,
   epoch: r.epoch as number,
@@ -147,13 +148,13 @@ export function createRepos(db: Db): Repos {
     db,
     sessions: {
       insert: (s) => {
-        db.prepare('INSERT INTO capture_sessions (id, streamer, stream_id, state, started_at, epoch, error) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-          s.id, s.streamer, s.streamId, s.state, s.startedAt, s.epoch, s.error ?? null,
+        db.prepare('INSERT INTO capture_sessions (id, streamer, stream_id, stream_title, state, started_at, epoch, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+          s.id, s.streamer, s.streamId, s.streamTitle ?? '', s.state, s.startedAt, s.epoch, s.error ?? null,
         );
       },
       update: (id, patch) =>
         updateById(db, 'capture_sessions', id, patch as Row, {
-          streamer: 'streamer', streamId: 'stream_id', state: 'state', startedAt: 'started_at', epoch: 'epoch', error: 'error', endedAt: 'ended_at',
+          streamer: 'streamer', streamId: 'stream_id', streamTitle: 'stream_title', state: 'state', startedAt: 'started_at', epoch: 'epoch', error: 'error', endedAt: 'ended_at',
         }),
       get: (id) => {
         const r = db.prepare('SELECT * FROM capture_sessions WHERE id = ?').get(id) as Row | undefined;

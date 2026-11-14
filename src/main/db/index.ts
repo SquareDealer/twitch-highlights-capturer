@@ -45,6 +45,7 @@ const MIGRATIONS: string[] = [
   CREATE TABLE drive_folders (path_key TEXT PRIMARY KEY, drive_id TEXT NOT NULL);
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `,
+  `ALTER TABLE capture_sessions ADD COLUMN stream_title TEXT NOT NULL DEFAULT '';`,
 ];
 
 /** Opens (and migrates) the application database. Use ':memory:' in tests. */

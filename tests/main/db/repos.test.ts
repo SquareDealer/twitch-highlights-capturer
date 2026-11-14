@@ -50,7 +50,7 @@ test('markers.update переносит маркер в другой момен�
 test('sessions: insert, update и get', () => {
   repos.sessions.insert(session('s1'));
   repos.sessions.update('s1', { state: 'ERROR', error: 'boom', epoch: 2, endedAt: '2026-11-14T19:00:00.000Z' });
-  expect(repos.sessions.get('s1')).toEqual({ ...session('s1'), state: 'ERROR', error: 'boom', epoch: 2 });
+  expect(repos.sessions.get('s1')).toEqual({ ...session('s1'), streamTitle: '', state: 'ERROR', error: 'boom', epoch: 2 });
   expect(repos.sessions.get('zzz')).toBeNull();
 });
 
@@ -80,6 +80,26 @@ test('driveFiles.upsert заменяет строку по (clipId, kind)', () =
   repos.driveFiles.setFolder('a/b', 'id2');
   expect(repos.driveFiles.getFolder('a/b')).toBe('id2');
   expect(repos.driveFiles.getFolder('a')).toBeNull();
+});
+
+test('название стрима сохраняется; база старой версии обновляется без потери данных', () => {
+  repos.sessions.insert({ ...session('s1'), streamTitle: 'Ranked до Immortal!' });
+  repos.sessions.insert(session('s2'));
+  expect(repos.sessions.get('s1')!.streamTitle).toBe('Ranked до Immortal!');
+  expect(repos.sessions.get('s2')!.streamTitle).toBe('');
+
+  // a database created before the stream title existed
+  const file = join(tmpDir(), 'old.sqlite');
+  const old = openDb(file);
+  old.exec('ALTER TABLE capture_sessions DROP COLUMN stream_title');
+  old.exec("INSERT INTO capture_sessions (id, streamer, stream_id, state, started_at) VALUES ('legacy', 'foo', '42', 'IDLE', '2026-11-14T18:30:00.000Z')");
+  old.pragma('user_version = 1');
+  old.close();
+  const upgraded = createRepos(openDb(file));
+  expect(upgraded.sessions.get('legacy')).toMatchObject({ streamId: '42', streamTitle: '' });
+  upgraded.sessions.insert({ ...session('new'), streamTitle: 'T' });
+  expect(upgraded.sessions.get('new')!.streamTitle).toBe('T');
+  upgraded.db.close();
 });
 
 test('повторный openDb того же файла не пересоздаёт таблицы и сохраняет данные', () => {

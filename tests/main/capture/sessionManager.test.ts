@@ -11,7 +11,7 @@ import { defaultSettings, SettingsStore } from '../../../src/main/settings';
 import { tmpDir } from '../../helpers';
 
 class FakeRunner implements ProcessRunner {
-  probes: Array<{ live: true; streamId: string } | { live: false; reason: string }> = [];
+  probes: Array<{ live: true; streamId: string; streamTitle?: string } | { live: false; reason: string }> = [];
   binariesError: string | null = null;
   probeCalls = 0;
   spawned: Array<{ channel: string; epochDir: string; exit: (reason: string) => void; stopped: boolean }> = [];
@@ -21,7 +21,7 @@ class FakeRunner implements ProcessRunner {
 
   async probe() {
     this.probeCalls++;
-    return this.probes.shift() ?? { live: true as const, streamId: '987654321' };
+    return this.probes.shift() ?? { live: true as const, streamId: '987654321', streamTitle: 'Ranked до Immortal!' };
   }
   async checkBinaries() {
     return this.binariesError;
@@ -94,12 +94,12 @@ const until = (cond: () => boolean) => vi.waitFor(() => expect(cond()).toBe(true
 
 test('start: CONNECTING → RECORDING после первого сегмента; streamId из probe', async () => {
   await manager.start('Foo_Bar');
-  expect(manager.current()).toMatchObject({ streamer: 'foo_bar', streamId: '987654321', state: 'CONNECTING', epoch: 0 });
+  expect(manager.current()).toMatchObject({ streamer: 'foo_bar', streamId: '987654321', streamTitle: 'Ranked до Immortal!', state: 'CONNECTING', epoch: 0 });
   expect(runner.spawned[0]!.epochDir).toBe(join(bufferDir, manager.current()!.id, 'e0'));
   feed(runner.spawned[0]!.epochDir, 0, 1234.5, 1236.5);
   await until(() => manager.current()!.state === 'RECORDING');
   expect(states).toEqual(['CONNECTING', 'RECORDING']);
-  expect(repos.sessions.get(manager.current()!.id)).toMatchObject({ state: 'RECORDING', streamId: '987654321' });
+  expect(repos.sessions.get(manager.current()!.id)).toMatchObject({ state: 'RECORDING', streamId: '987654321', streamTitle: 'Ranked до Immortal!' });
   const seg = ring.latest(0) as Segment;
   expect(seg).toMatchObject({ seq: 0, startMs: 0, endMs: 2000, bytes: 10, epoch: 0 });
   expect(timeSync.captureNow(Date.now())).not.toBeNull();

@@ -90,6 +90,7 @@ export class CaptureSessionManager extends EventEmitter {
     if (!probe.live) return this.fail('Канал не в эфире');
 
     session.streamId = probe.streamId;
+    session.streamTitle = probe.streamTitle ?? '';
     this.deps.sessions.insert(session);
     this.cleanupTimer = setInterval(() => void this.deps.ring.cleanup(), CLEANUP_INTERVAL_MS);
     this.cleanupTimer.unref?.();

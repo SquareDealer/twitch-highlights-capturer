@@ -22,7 +22,7 @@ beforeEach(() => {
   libraryDir = join(root, 'library');
   draftsDir = join(root, 'drafts');
   w.settings.set({ libraryDir });
-  w.repos.sessions.insert(w.session()!);
+  w.repos.sessions.insert({ ...w.session()!, streamTitle: 'Ranked до Immortal!' });
   encodeError = null;
   encodes = [];
   saved = [];
@@ -83,7 +83,7 @@ test('успех: mp4 и markers.json на месте, .part нет, clip в Б�
   await runJob(job);
   const clip = w.repos.clips.get(job.clipId)!;
   expect(clip).toMatchObject({ title: 'Funny reaction', durationMs: 40_000, syncStatus: 'pending', sessionId: 's1', momentId: job.momentId });
-  expect(clip.mp4Path.replace(/\\/g, '/')).toMatch(/library\/foo\/987654321_\d{4}-\d\d-\d\d_\d\d-\d\d\/2026-11-14_19-42_funny-reaction_[0-9a-f]{4}\/funny-reaction\.mp4$/);
+  expect(clip.mp4Path.replace(/\\/g, '/')).toMatch(/library\/foo\/ranked-до-immortal_\d{4}-\d\d-\d\d_\d\d-\d\d\/2026-11-14_19-42_funny-reaction_[0-9a-f]{4}\/funny-reaction\.mp4$/);
   expect(readdirSync(clip.dir).sort()).toEqual(['funny-reaction.mp4', 'markers.json']);
   expect(encodes).toEqual([{ startMs: 10_000, durationMs: 40_000 }]);
   expect(w.repos.moments.get(job.momentId)!.status).toBe('SAVED');
@@ -108,6 +108,7 @@ test('markers.json: timeMs = sourceTimeMs − draft.startMs − trimStartMs; м�
     title: 'Funny reaction',
     streamer: 'foo',
     streamId: '987654321',
+    streamTitle: 'Ranked до Immortal!',
     createdAt: new Date(2026, 10, 14, 19, 42, 10).toISOString(),
     durationMs: 40_000,
     sourceEpoch: 0,

@@ -34,11 +34,13 @@ test('ffmpegSegmentArgs: -c copy, segment_time 2, csv-список в катал
 });
 
 test('parseProbeOutput: эфир, оффлайн, мусор', () => {
-  expect(parseProbeOutput('{"metadata":{"id":"987654321","author":"x"},"streams":{}}')).toEqual({ live: true, streamId: '987654321' });
-  expect(parseProbeOutput('{"streams":{}}')).toEqual({ live: true, streamId: 'unknown' });
+  expect(parseProbeOutput('{"metadata":{"id":"987654321","author":"x","title":"  Ranked до Immortal!  "},"streams":{}}')).toEqual({ live: true, streamId: '987654321', streamTitle: 'Ranked до Immortal!' });
+  expect(parseProbeOutput('{"metadata":{"id":"987654321","author":"x"},"streams":{}}')).toEqual({ live: true, streamId: '987654321', streamTitle: '' });
+  expect(parseProbeOutput('{"metadata":{"id":"1","title":null}}')).toEqual({ live: true, streamId: '1', streamTitle: '' });
+  expect(parseProbeOutput('{"streams":{}}')).toEqual({ live: true, streamId: 'unknown', streamTitle: '' });
   expect(parseProbeOutput('{"error":"No playable streams found on this URL"}')).toEqual({ live: false, reason: 'No playable streams found on this URL' });
   expect(parseProbeOutput('not json')).toMatchObject({ live: false });
-  expect(parseProbeOutput('{"metadata":{"id":12345}}')).toEqual({ live: true, streamId: '12345' });
+  expect(parseProbeOutput('{"metadata":{"id":12345}}')).toEqual({ live: true, streamId: '12345', streamTitle: '' });
 });
 
 describe.skipIf(!hasFfmpeg)('ffmpeg', () => {

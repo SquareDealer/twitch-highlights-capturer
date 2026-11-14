@@ -5,6 +5,8 @@ export interface CaptureSession {
   id: string;
   streamer: string;
   streamId: string;
+  /** Stream title at the moment capture started ('' when Twitch did not report one). */
+  streamTitle?: string;
   state: CaptureState;
   startedAt: string;
   epoch: number;
