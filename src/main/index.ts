@@ -1,7 +1,11 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
+import { OAuth2Client } from 'google-auth-library';
 import { join } from 'node:path';
 import { eventChannel } from '@shared/ipc';
 import { createApp, type App } from './app';
+import { createDriveSync } from './drive';
+import { DriveAuth, type OAuthLike } from './drive/auth';
+import { createDriveClient } from './drive/driveClient';
 import { attachHotkeys } from './hotkeys';
 import { registerIpc } from './ipc';
 import { startLocalServer, type LocalServer } from './server';
@@ -27,6 +31,36 @@ async function bootstrap(): Promise<void> {
     showItemInFolder: (p) => shell.showItemInFolder(p),
     send: (event, payload) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(eventChannel(event), payload);
+    },
+    createDrive: (ctx) => {
+      const requireEncryption = () => {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('защищённое хранилище системы недоступно');
+      };
+      const auth = new DriveAuth({
+        settings: ctx.settings,
+        tokenFile: join(ctx.userDataDir, 'drive-token.bin'),
+        encrypt: (plain) => {
+          requireEncryption();
+          return safeStorage.encryptString(plain);
+        },
+        decrypt: (data) => {
+          requireEncryption();
+          return safeStorage.decryptString(data);
+        },
+        openExternal: (url) => shell.openExternal(url),
+        createClient: (o) => new OAuth2Client(o) as unknown as OAuthLike,
+      });
+      return createDriveSync({
+        repos: ctx.repos,
+        settings: ctx.settings,
+        auth,
+        getClient: async () => {
+          const client = await auth.client();
+          return client ? createDriveClient((o) => client.request(o)) : null;
+        },
+        notify: ctx.notify,
+        clipsChanged: ctx.clipsChanged,
+      });
     },
   });
   await core.start();

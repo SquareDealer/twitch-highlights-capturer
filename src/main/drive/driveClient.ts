@@ -1,0 +1,96 @@
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
+
+export interface DriveClient {
+  /** Finds a folder by name under `parentId` (null = My Drive root) or creates it. */
+  ensureFolder(name: string, parentId: string | null): Promise<string>;
+  uploadFile(a: { localPath: string; name: string; parentId: string; mimeType: string; existingFileId?: string }): Promise<{ id: string; version: string; md5: string }>;
+}
+
+/** The subset of `OAuth2Client.request` this module relies on. */
+export type DriveRequest = (opts: {
+  url: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH';
+  params?: Record<string, string>;
+  data?: unknown;
+  headers?: Record<string, string>;
+}) => Promise<{ data: unknown; headers: unknown }>;
+
+const FILES = 'https://www.googleapis.com/drive/v3/files';
+const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+const FOLDER_MIME = 'application/vnd.google-apps.folder';
+
+/** HTTP status of a failed Google API call, whichever way the HTTP layer reports it. */
+export function httpStatus(e: unknown): number | null {
+  const err = e as { status?: unknown; code?: unknown; response?: { status?: unknown } };
+  for (const v of [err?.status, err?.response?.status, err?.code]) {
+    const n = Number(v);
+    if (Number.isInteger(n) && n >= 100 && n <= 599) return n;
+  }
+  return null;
+}
+
+const quote = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+const header = (headers: unknown, name: string): string | null => {
+  if (!headers) return null;
+  const h = headers as { get?: (n: string) => string | null } & Record<string, unknown>;
+  const value = typeof h.get === 'function' ? h.get(name) : (h[name] ?? h[name.toLowerCase()]);
+  return typeof value === 'string' && value ? value : null;
+};
+
+export function createDriveClient(request: DriveRequest): DriveClient {
+  async function upload(a: { localPath: string; name: string; parentId: string; mimeType: string }, existingFileId?: string) {
+    const size = (await stat(a.localPath)).size;
+    // Resumable protocol: open a session with the metadata, then send the bytes as one streamed request.
+    const session = await request({
+      url: existingFileId ? `${UPLOAD}/${encodeURIComponent(existingFileId)}` : UPLOAD,
+      method: existingFileId ? 'PATCH' : 'POST',
+      params: { uploadType: 'resumable', fields: 'id,version,md5Checksum' },
+      data: existingFileId ? { name: a.name } : { name: a.name, parents: [a.parentId] },
+      headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': a.mimeType, 'X-Upload-Content-Length': String(size) },
+    });
+    const location = header(session.headers, 'location');
+    if (!location) throw new Error('Google Drive не выдал адрес загрузки');
+    const done = await request({
+      url: location,
+      method: 'PUT',
+      data: createReadStream(a.localPath),
+      headers: { 'Content-Type': a.mimeType, 'Content-Length': String(size) },
+    });
+    const file = (done.data ?? {}) as { id?: string; version?: string | number; md5Checksum?: string };
+    if (!file.id) throw new Error('Google Drive не подтвердил загрузку файла');
+    return { id: file.id, version: String(file.version ?? ''), md5: file.md5Checksum ?? '' };
+  }
+
+  return {
+    async ensureFolder(name, parentId) {
+      const parent = parentId ?? 'root';
+      const found = await request({
+        url: FILES,
+        params: {
+          q: `name = ${quote(name)} and ${quote(parent)} in parents and mimeType = '${FOLDER_MIME}' and trashed = false`,
+          fields: 'files(id)',
+          spaces: 'drive',
+          pageSize: '1',
+        },
+      });
+      const existing = (found.data as { files?: Array<{ id: string }> })?.files?.[0]?.id;
+      if (existing) return existing;
+      const created = await request({ url: FILES, method: 'POST', params: { fields: 'id' }, data: { name, mimeType: FOLDER_MIME, parents: [parent] } });
+      const id = (created.data as { id?: string })?.id;
+      if (!id) throw new Error('Google Drive не создал папку');
+      return id;
+    },
+
+    async uploadFile(a) {
+      if (a.existingFileId) {
+        try {
+          return await upload(a, a.existingFileId);
+        } catch (e) {
+          if (httpStatus(e) !== 404) throw e; // deleted in Drive: fall through and create it again
+        }
+      }
+      return upload(a);
+    },
+  };
+}

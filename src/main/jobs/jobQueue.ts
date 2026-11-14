@@ -82,6 +82,11 @@ export class JobQueue<P> {
     await this.current?.catch(() => undefined);
   }
 
+  /** Resolves once the job currently in flight (if any) has finished. */
+  async whenIdle(): Promise<void> {
+    await this.current?.catch(() => undefined);
+  }
+
   retryFailed(): number {
     return this.db.prepare("UPDATE jobs SET status = 'queued', attempts = 0, next_run_at = 0 WHERE type = ? AND status = 'failed'").run(this.type).changes;
   }

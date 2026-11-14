@@ -48,6 +48,9 @@ export interface Repos {
     upsert(r: DriveFileRow): void;
     getFolder(pathKey: string): string | null;
     setFolder(pathKey: string, driveId: string): void;
+    /** Forget what was uploaded for a clip (it will be uploaded again). */
+    remove(clipId: string): void;
+    clearFolders(): void;
   };
 }
 
@@ -236,6 +239,12 @@ export function createRepos(db: Db): Repos {
       },
       setFolder: (pathKey, driveId) => {
         db.prepare('INSERT OR REPLACE INTO drive_folders (path_key, drive_id) VALUES (?, ?)').run(pathKey, driveId);
+      },
+      remove: (clipId) => {
+        db.prepare('DELETE FROM drive_files WHERE clip_id = ?').run(clipId);
+      },
+      clearFolders: () => {
+        db.prepare('DELETE FROM drive_folders').run();
       },
     },
   };
