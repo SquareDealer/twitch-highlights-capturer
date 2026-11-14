@@ -1,6 +1,9 @@
 import { useEffect } from 'react';
 import { Notices } from './components/Notices';
 import { AppStoreProvider, useAppStore, type View } from './store';
+import { EditorView } from './views/EditorView';
+import { LibraryView } from './views/LibraryView';
+import { SettingsView } from './views/SettingsView';
 import { WatchView } from './views/WatchView';
 
 const TABS: Array<{ view: View; label: string }> = [
@@ -59,9 +62,9 @@ function Shell() {
         <div className="pane" hidden={state.view !== 'watch'}>
           <WatchView />
         </div>
-        {state.view === 'editor' && <div className="pane pane--scroll">Редактор</div>}
-        {state.view === 'library' && <div className="pane pane--scroll">Библиотека</div>}
-        {state.view === 'settings' && <div className="pane pane--scroll">Настройки</div>}
+        {state.view === 'editor' && <div className="pane"><EditorView /></div>}
+        {state.view === 'library' && <div className="pane pane--scroll"><LibraryView /></div>}
+        {state.view === 'settings' && <div className="pane pane--scroll"><SettingsView /></div>}
       </main>
       <Notices />
     </div>
