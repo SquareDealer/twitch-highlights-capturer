@@ -16,6 +16,7 @@ export interface SyncWorkerDeps {
 }
 
 const ROOT_FOLDER = 'TwitchHighlights';
+export const NOT_CONNECTED_ERROR = 'Google Drive не подключён';
 
 function md5OfFile(path: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -45,7 +46,7 @@ export class SyncWorker {
     if (!clip) return;
     if (!existsSync(clip.mp4Path) || !existsSync(clip.markersPath)) throw new Error('Файлы клипа не готовы');
     const client = await this.deps.getClient();
-    if (!client) throw new Error('Google Drive не подключён');
+    if (!client) throw new Error(NOT_CONNECTED_ERROR);
 
     try {
       // <library>/<streamer>/<session>/<clip folder> → the same three levels under the Drive root folder

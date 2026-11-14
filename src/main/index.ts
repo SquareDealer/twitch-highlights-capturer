@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, session, shell } from 'electron';
 import { OAuth2Client } from 'google-auth-library';
 import { join } from 'node:path';
 import { eventChannel } from '@shared/ipc';
@@ -69,6 +69,10 @@ async function bootstrap(): Promise<void> {
     const frame = event.senderFrame;
     return Boolean(mainWindow && frame && frame === mainWindow.webContents.mainFrame && new URL(frame.url).origin === appOrigin);
   });
+
+  // Embedded third-party content (the Twitch player and its ad frames) gets no device permissions.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'fullscreen'));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'fullscreen');
 
   mainWindow = new BrowserWindow({
     width: 1360,

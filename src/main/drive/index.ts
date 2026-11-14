@@ -2,8 +2,8 @@ import type { DriveStatus, Notice, Result } from '@shared/types';
 import type { Repos } from '../db/repos';
 import { JobQueue } from '../jobs/jobQueue';
 import type { SettingsStore } from '../settings';
-import type { DriveClient } from './driveClient';
-import { SyncWorker, type SyncJob } from './syncWorker';
+import { httpStatus, type DriveClient } from './driveClient';
+import { NOT_CONNECTED_ERROR, SyncWorker, type SyncJob } from './syncWorker';
 
 export interface DriveSyncDeps {
   repos: Repos;
@@ -13,6 +13,8 @@ export interface DriveSyncDeps {
     isConnected(): Promise<boolean>;
     connect(): Promise<Result<null>>;
     disconnect(): Promise<void>;
+    /** Drop the stored tokens: Google no longer accepts them. */
+    invalidate(): Promise<void>;
   };
   getClient: () => Promise<DriveClient | null>;
   notify: (n: Notice) => void;
@@ -34,7 +36,17 @@ export function createDriveSync(deps: DriveSyncDeps) {
     repos.db,
     'sync',
     async (job) => {
-      await worker.handle(job);
+      try {
+        await worker.handle(job);
+      } catch (e) {
+        // Revoked or expired access is not a transient error: say so once and stop presenting Drive as connected.
+        if (httpStatus(e) === 401 || /invalid_grant/i.test((e as Error).message ?? '')) {
+          await deps.auth.invalidate().catch(() => undefined);
+          deps.notify({ level: 'error', message: 'Доступ к Google Drive отозван или истёк — подключите его заново в «Настройках»' });
+          throw new Error(NOT_CONNECTED_ERROR);
+        }
+        throw e;
+      }
       deps.clipsChanged();
     },
     {
@@ -44,7 +56,7 @@ export function createDriveSync(deps: DriveSyncDeps) {
         worker.onFailed(job, error);
         const clip = repos.clips.get(job.clipId);
         deps.clipsChanged();
-        if (clip) deps.notify({ level: 'error', message: `Не удалось синхронизировать «${clip.title || 'без названия'}» с Google Drive: ${error}` });
+        if (clip && error !== NOT_CONNECTED_ERROR) deps.notify({ level: 'error', message: `Не удалось синхронизировать «${clip.title || 'без названия'}» с Google Drive: ${error}` });
       },
     },
   );
@@ -101,7 +113,10 @@ export function createDriveSync(deps: DriveSyncDeps) {
       queue.recover();
       queue.start(2000);
     },
-    stop: () => queue.stop(),
+    /** Does not wait for an upload in flight: it may be stalled, and it is re-queued on the next start anyway. */
+    async stop(): Promise<void> {
+      queue.stopPolling();
+    },
     /** Runs everything that is due right now (used by tests and on demand). */
     async drain(): Promise<void> {
       for (;;) {

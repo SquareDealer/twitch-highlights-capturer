@@ -64,11 +64,10 @@ test('буфер короче 180 с → черновик из имеющего�
 });
 
 test.each([
-  ['нет сессии', (x: World) => x.setSession(null)],
-  ['RECONNECTING', (x: World) => x.setState('RECONNECTING')],
-  ['RECORDING без сегментов', (x: World) => x.timeSync.reset()],
+  ['нет сессии', (x: World) => { x.feed(0, 0, 20_000); x.setSession(null); }],
+  ['RECORDING без сегментов', (_x: World) => {}],
+  ['RECONNECTING без сегментов', (x: World) => x.setState('RECONNECTING')],
 ])('F8 при «%s» → ok:false, pin снят, файла нет', async (_n, arrange) => {
-  w.feed(0, 0, 20_000);
   arrange(w);
   expect(await drafts.captureReplay()).toEqual({ ok: false, error: 'Буфер пуст — нечего сохранять' });
   expect(existsSync(draftsDir) ? readdirSync(draftsDir) : []).toEqual([]);
@@ -116,25 +115,71 @@ test('ошибка concat → ok:false, pin снят, частичный фай�
   expect(w.repos.moments.activeFor('s1')?.draftId ?? null).toBeNull();
 });
 
-test('createFromMarkers: диапазон [min − 30 с, max + 60 с] в эпохе последнего маркера; null без маркеров', async () => {
+test('createFromMarkers: один черновик на группу близких маркеров, диапазон [min − 30 с, max + 60 с]; без маркеров — ничего', async () => {
   w.feed(0, 0, 300_000);
-  expect(await drafts.createFromMarkers('s1')).toBeNull();
+  expect(await drafts.createFromMarkers('s1')).toEqual([]);
   w.moments.addMarker(1, WALL0 + 100_000);
   w.moments.addMarker(2, WALL0 + 150_000);
-  const d = (await drafts.createFromMarkers('s1'))!;
-  expect([d.epoch, d.startMs, d.endMs]).toEqual([0, 70_000, 210_000]);
-  expect(w.repos.moments.activeFor('s1')!.draftId).toBe(d.id);
-  expect(await drafts.createFromMarkers('s1')).toBeNull(); // already has a draft
+  const [d, ...rest] = await drafts.createFromMarkers('s1');
+  expect(rest).toEqual([]);
+  expect([d!.epoch, d!.startMs, d!.endMs]).toEqual([0, 70_000, 210_000]);
+  expect(w.repos.moments.activeFor('s1')!.draftId).toBe(d!.id);
+  expect(await drafts.createFromMarkers('s1')).toEqual([]); // everything is covered now
   expect(sleeps).toBe(0);
 });
 
-test('createFromMarkers берёт эпоху последнего маркера', async () => {
+test('createFromMarkers спасает маркер, поставленный после F8 за пределами уже существующего черновика', async () => {
+  w.feed(0, 0, 20_000);
+  keepRecording();
+  const first = await drafts.captureReplay();
+  if (!first.ok) throw new Error(first.error);
+  onSleep = () => {};
+  w.feed(0, 26_000, 400_000);
+  const inside = w.moments.addMarker(1, WALL0 + 10_000);
+  const later = w.moments.addMarker(2, WALL0 + 300_000);
+  if (!inside.ok || !later.ok) throw new Error('markers expected');
+  const built = await drafts.createFromMarkers('s1');
+  expect(built.map((d) => [d.epoch, d.startMs, d.endMs])).toEqual([[0, 270_000, 360_000]]);
+  expect(drafts.list()).toHaveLength(2);
+});
+
+test('createFromMarkers: маркеры из разных эпох и далеко друг от друга → отдельные черновики без разрывов внутри', async () => {
   w.feed(0, 0, 100_000);
   w.moments.addMarker(1, WALL0 + 50_000);
   w.feed(1, 0, 40_000);
   w.moments.addMarker(2, WALL0 + 10_000);
-  const d = (await drafts.createFromMarkers('s1'))!;
-  expect([d.epoch, d.startMs, d.endMs]).toEqual([1, 0, 40_000]);
+  w.feed(1, 40_000, 1_000_000);
+  w.moments.addMarker(3, WALL0 + 900_000);
+  await w.survives(1, 500_000); // the unpinned middle of epoch 1 is gone by now
+  const built = await drafts.createFromMarkers('s1');
+  expect(built.map((d) => [d.epoch, d.startMs, d.endMs])).toEqual([
+    [0, 20_000, 100_000],
+    [1, 0, 70_000],
+    [1, 870_000, 960_000],
+  ]);
+});
+
+test('F8 при переподключении: буфер цел → черновик из последних 180 с того, что записано, без ожидания', async () => {
+  w.feed(0, 0, 400_000);
+  w.setSession({ state: 'RECONNECTING', epoch: 1 });
+  const r = await drafts.captureReplay();
+  expect(r.ok && [r.value.epoch, r.value.startMs, r.value.endMs]).toEqual([0, 220_000, 400_000]);
+  expect(sleeps).toBe(0);
+});
+
+test('остановка записи во время дозаписи F8 не теряет повтор; whenIdle дожидается сборки', async () => {
+  w.feed(0, 0, 20_000);
+  onSleep = () => w.setState('STOPPING');
+  const pending = drafts.captureReplay();
+  let idle = false;
+  void drafts.whenIdle().then(() => (idle = true));
+  await Promise.resolve();
+  expect(idle).toBe(false);
+  const r = await pending;
+  expect(sleeps).toBe(1);
+  expect(r.ok && [r.value.startMs, r.value.endMs]).toEqual([0, 20_000]);
+  await drafts.whenIdle();
+  await vi.waitFor(() => expect(idle).toBe(true));
 });
 
 test('extend расширяет диапазон, пока сегменты есть; без сегментов возвращает прежний черновик', async () => {
@@ -204,6 +249,27 @@ describe.skipIf(!hasFfmpeg)('concatSegments', () => {
     const tail = join(dir, 'tail.mp4');
     await concatSegments('ffmpeg')(segments.slice(1), tail);
     expect(Math.abs(probeDurationSec(tail) - 4)).toBeLessThan(0.5);
+  });
+
+  test('путь к ffmpeg, изменённый в настройках после запуска, действует сразу', async () => {
+    const dir = tmpDir();
+    synthVideo(4, ['-f', 'segment', '-segment_time', '2', '-segment_format', 'mpegts', '-reset_timestamps', '0', join(dir, 'seg_%06d.ts')]);
+    w.settings.set({ ffmpegPath: join(dir, 'no-such-ffmpeg') });
+    const real = new DraftService({
+      repos: w.repos, ring: w.ring, timeSync: w.timeSync, moments: w.moments, settings: w.settings, draftsDir,
+      currentSession: () => w.session(), sleep: async () => {}, now: () => w.clock.now, newId: w.newId,
+    });
+    const files = readdirSync(dir).filter((f) => f.endsWith('.ts')).sort();
+    files.forEach((f, i) => {
+      const seg = { sessionId: 's1', epoch: 0, seq: i, path: join(dir, f), startMs: i * 2000, endMs: i * 2000 + 2000, bytes: 1, completedAtWallMs: WALL0 + i * 2000 + 2000 };
+      w.ring.add(seg);
+      w.timeSync.onSegment(seg);
+    });
+    w.setState('RECONNECTING');
+    expect((await real.captureReplay()).ok).toBe(false);
+    w.settings.set({ ffmpegPath: 'ffmpeg' });
+    const ok = await real.captureReplay();
+    expect(ok.ok && probeDurationSec(ok.value.filePath)).toBeGreaterThan(3);
   });
 
   test('ошибка ffmpeg отклоняет промис', async () => {

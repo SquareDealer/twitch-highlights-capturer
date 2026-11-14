@@ -17,10 +17,15 @@ let notices: Notice[];
 let changed: number;
 let root: string;
 let drive: ReturnType<typeof createDriveSync>;
+let invalidated: number;
+let uploadError: Error | null;
+let hangUpload: boolean;
 
 const client: DriveClient = {
   ensureFolder: async (name) => `folder:${name}`,
   uploadFile: async (a) => {
+    if (hangUpload) await new Promise(() => {});
+    if (uploadError) throw uploadError;
     if (failUploads) throw new Error('getaddrinfo ENOTFOUND www.googleapis.com');
     uploads.push(a.name);
     return { id: `id:${a.name}`, version: '1', md5: 'x' };
@@ -44,6 +49,9 @@ beforeEach(() => {
   connected = true;
   uploads = [];
   failUploads = false;
+  invalidated = 0;
+  uploadError = null;
+  hangUpload = false;
   notices = [];
   changed = 0;
   drive = createDriveSync({
@@ -56,6 +64,10 @@ beforeEach(() => {
         return { ok: true, value: null };
       },
       disconnect: async () => void (connected = false),
+      invalidate: async () => {
+        invalidated++;
+        connected = false;
+      },
     },
     getClient: async () => (connected ? client : null),
     notify: (n) => notices.push(n),
@@ -157,4 +169,29 @@ test('start после перезапуска возвращает прерва�
   drive.start();
   await idle();
   expect(repos.clips.get('c1')!.syncStatus).toBe('synced');
+});
+
+test('отозванный доступ (invalid_grant): Drive помечается отключённым, одно понятное уведомление, после нового входа клипы догружаются', async () => {
+  clip('c1');
+  clip('bb');
+  uploadError = new Error('invalid_grant');
+  drive.syncAll();
+  await idle();
+  expect(invalidated).toBe(1);
+  expect(notices).toEqual([{ level: 'error', message: 'Доступ к Google Drive отозван или истёк — подключите его заново в «Настройках»' }]);
+  expect(await drive.status()).toEqual({ connected: false });
+  uploadError = null;
+  await drive.connect();
+  await idle();
+  expect(repos.clips.list().map((c) => c.syncStatus)).toEqual(['synced', 'synced']);
+});
+
+test('stop не ждёт зависшую загрузку', async () => {
+  clip('c1');
+  hangUpload = true;
+  drive.sync('c1');
+  await new Promise((r) => setTimeout(r, 30));
+  const started = Date.now();
+  await drive.stop();
+  expect(Date.now() - started).toBeLessThan(500);
 });

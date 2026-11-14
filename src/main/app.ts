@@ -37,6 +37,8 @@ export interface AppOptions {
   mediaOrigin: () => string;
   showItemInFolder?: (path: string) => void;
   createDrive?: (ctx: { repos: ReturnType<typeof createRepos>; settings: SettingsStore; userDataDir: string; notify: (n: ThrEvents['notice']) => void; clipsChanged: () => void }) => DriveFacade;
+  /** How long shutdown waits for a running export before leaving it to be resumed on next start. */
+  shutdownTimeoutMs?: number;
   overrides?: { runner?: ProcessRunner; concat?: ConcatFn; encode?: EncodeFn; sleep?: (ms: number) => Promise<void>; pollMs?: number };
 }
 
@@ -72,6 +74,7 @@ function sanitizeSettings(patch: unknown): Partial<Settings> {
   if (!patch || typeof patch !== 'object') return out;
   for (const [key, value] of Object.entries(patch)) {
     const kind = EDITABLE_SETTINGS[key as keyof Settings];
+    if (key === 'driveClientSecret' && value === '') continue; // the secret is never echoed to the UI, so an empty value means "unchanged"
     if (kind === 'path' && typeof value === 'string' && value.trim()) out[key] = value.trim();
     else if (kind === 'text' && typeof value === 'string') out[key] = value.trim();
     else if (kind === 'latency' && Number.isInteger(value) && Math.abs(value as number) <= LATENCY_LIMIT_MS) out[key] = value;
@@ -117,6 +120,7 @@ export function createApp(opts: AppOptions) {
     sleep: o.sleep,
     pollMs: o.pollMs,
     beforeStop: async (session) => {
+      await drafts.whenIdle(); // a replay requested just before the stop still needs the buffer
       await drafts.createFromMarkers(session.id);
     },
     replay: async () => {
@@ -181,12 +185,10 @@ export function createApp(opts: AppOptions) {
 
   async function toggleEditor(): Promise<void> {
     if (ui.mode === 'editor') return send('nav', { view: 'watch' });
-    const session = sessionManager.current();
     let draftId = activeMoment()?.draftId ?? null;
-    if (!draftId && session?.state === 'RECORDING') draftId = await replay();
-    else if (!draftId) {
-      draftId = drafts.list().at(-1)?.id ?? null;
-      if (!draftId) notify('warn', 'Черновиков нет — нажмите F8 во время просмотра');
+    if (!draftId) {
+      draftId = sessionManager.current() ? await replay() : (drafts.list().at(-1)?.id ?? null);
+      if (!draftId && !sessionManager.current()) notify('warn', 'Черновиков нет — нажмите F8 во время просмотра');
     }
     if (draftId) send('nav', { view: 'editor', draftId });
   }
@@ -200,7 +202,7 @@ export function createApp(opts: AppOptions) {
         return;
       }
       case 'replay':
-        if (sessionManager.current()?.state !== 'RECORDING') return notify('warn', 'Буфер пуст — нечего сохранять');
+        if (!sessionManager.current()) return notify('warn', 'Буфер пуст — нечего сохранять');
         void replay().catch((e: Error) => notify('error', e.message));
         return;
       case 'toggleEditor':
@@ -290,8 +292,9 @@ export function createApp(opts: AppOptions) {
       disconnect: () => drive.disconnect(),
     },
     settings: {
-      get: async () => settings.get(),
-      set: async (patch) => settings.set(sanitizeSettings(patch)),
+      // The Drive client secret is write-only for the window: third-party player code runs in that page.
+      get: async () => ({ ...settings.get(), driveClientSecret: '' }),
+      set: async (patch) => ({ ...settings.set(sanitizeSettings(patch)), driveClientSecret: '' }),
     },
   };
 
@@ -309,8 +312,12 @@ export function createApp(opts: AppOptions) {
         repos.moments.clearDraft(draft.id);
       }
     }
-    // Without a draft the footage is gone (clean stops always build one), so the moment cannot be saved any more.
-    for (const m of repos.moments.listByStatus('ACTIVE')) if (!m.draftId) repos.moments.setStatus(m.id, 'DISCARDED');
+    // A session's ACTIVE moment holds the markers of all of its drafts, not only of `draftId` (the latest F8),
+    // so it is closed only when the session has no draft left: then its footage is really gone.
+    const sessionsWithDrafts = new Set(repos.drafts.list().map((d) => d.sessionId));
+    for (const m of repos.moments.listByStatus('ACTIVE')) {
+      if (!sessionsWithDrafts.has(m.streamSessionId)) repos.moments.setStatus(m.id, 'DISCARDED');
+    }
     for (const m of repos.moments.listByStatus('FAILED')) if (!m.draftId) repos.moments.setStatus(m.id, 'DISCARDED');
     exportQueue.recover();
     exportQueue.start(500);
@@ -324,7 +331,10 @@ export function createApp(opts: AppOptions) {
     if (statusTimer) clearInterval(statusTimer);
     await sessionManager.stop().catch(() => undefined);
     shuttingDown = true;
-    await exportQueue.stop();
+    // A long encode or a stalled upload must not keep the process (and the single-instance lock) alive:
+    // unfinished jobs are picked up again on the next start.
+    exportQueue.stopPolling();
+    await Promise.race([exportQueue.whenIdle(), new Promise((r) => setTimeout(r, opts.shutdownTimeoutMs ?? 10_000))]);
     await drive.stop();
     db.close();
   }

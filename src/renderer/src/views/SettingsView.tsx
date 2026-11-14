@@ -32,6 +32,7 @@ export function SettingsView() {
       <input
         className="input"
         type={type}
+        placeholder={type === 'password' ? 'Сохранённое значение скрыто; введите новое, чтобы заменить' : undefined}
         spellCheck={false}
         value={form[key] ?? ''}
         onChange={(e) => setForm({ ...form, [key]: e.target.value })}

@@ -75,6 +75,11 @@ export class RingBufferManager extends EventEmitter {
     return this.byEpoch.get(epoch)?.at(-1) ?? null;
   }
 
+  /** The newest epoch that still has segments, or null when the buffer is empty. */
+  latestEpoch(): number | null {
+    return this.byEpoch.size === 0 ? null : Math.max(...this.byEpoch.keys());
+  }
+
   /** Duration available in the newest epoch within the retention window. */
   bufferedMs(): number {
     if (this.byEpoch.size === 0) return 0;

@@ -41,9 +41,10 @@ test('ensureFolder создаёт папку, когда её нет; корен
 test('uploadFile: resumable-сессия, затем PUT содержимого; возвращает id, версию и md5', async () => {
   const file = join(tmpDir(), 'clip.mp4');
   writeFileSync(file, 'x'.repeat(1234));
-  respond = (c) => (c.method === 'POST' ? { headers: { location: 'https://upload.example/session1' } } : { data: { id: 'file1', version: '3', md5Checksum: 'abc' } });
+  respond = (c) => (c.method === 'GET' ? { data: { files: [] } } : c.method === 'POST' ? { headers: { location: 'https://upload.example/session1' } } : { data: { id: 'file1', version: '3', md5Checksum: 'abc' } });
   const out = await createDriveClient(request).uploadFile({ localPath: file, name: 'clip.mp4', parentId: 'p1', mimeType: 'video/mp4' });
   expect(out).toEqual({ id: 'file1', version: '3', md5: 'abc' });
+  calls.shift(); // the lookup for an already uploaded copy
   expect(calls[0]).toMatchObject({ method: 'POST', url: 'https://www.googleapis.com/upload/drive/v3/files', data: { name: 'clip.mp4', parents: ['p1'] } });
   expect(calls[0]!.params).toMatchObject({ uploadType: 'resumable' });
   expect(calls[0]!.headers).toMatchObject({ 'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': '1234' });
@@ -64,17 +65,18 @@ test('uploadFile: 404 при обновлении (файл удалён в Driv
   writeFileSync(file, '{}');
   respond = (c) => {
     if (c.method === 'PATCH') throw Object.assign(new Error('File not found'), { status: 404 });
+    if (c.method === 'GET') return { data: { files: [] } };
     return c.method === 'POST' ? { headers: { location: 'https://upload.example/s3' } } : { data: { id: 'file2', version: '1', md5Checksum: 'x' } };
   };
   const out = await createDriveClient(request).uploadFile({ localPath: file, name: 'markers.json', parentId: 'p1', mimeType: 'application/json', existingFileId: 'gone' });
   expect(out.id).toBe('file2');
-  expect(calls.map((c) => c.method)).toEqual(['PATCH', 'POST', 'PUT']);
+  expect(calls.map((c) => c.method)).toEqual(['PATCH', 'GET', 'POST', 'PUT']);
 });
 
 test('uploadFile без Location в ответе → понятная ошибка', async () => {
   const file = join(tmpDir(), 'a.json');
   writeFileSync(file, '{}');
-  respond = () => ({});
+  respond = (c) => (c.method === 'GET' ? { data: { files: [] } } : {});
   await expect(createDriveClient(request).uploadFile({ localPath: file, name: 'a.json', parentId: 'p', mimeType: 'application/json' })).rejects.toThrow('Google Drive не выдал адрес загрузки');
 });
 
@@ -98,7 +100,7 @@ test('реальный HTTP-слой google-auth-library: файл уходит 
   oauth.setCredentials({ access_token: 'test-access-token', expiry_date: Date.now() + 3_600_000 });
   const real = oauth.request.bind(oauth) as unknown as DriveRequest;
   // Opening the session would hit googleapis.com; only the byte transfer goes through the real client.
-  const mixed: DriveRequest = (opts) => (opts.method === 'PUT' ? real(opts) : Promise.resolve({ data: {}, headers: new Headers({ location }) }));
+  const mixed: DriveRequest = (opts) => (opts.method === 'PUT' ? real(opts) : Promise.resolve({ data: { files: [] }, headers: new Headers({ location }) }));
   try {
     const out = await createDriveClient(mixed).uploadFile({ localPath: file, name: 'clip.mp4', parentId: 'p', mimeType: 'video/mp4' });
     expect(out).toEqual({ id: 'file9', version: '2', md5: 'm' });
@@ -110,4 +112,18 @@ test('реальный HTTP-слой google-auth-library: файл уходит 
     server.close();
     server.closeAllConnections();
   }
+});
+
+test('uploadFile: файл с таким именем уже лежит в папке (ответ прошлой загрузки потерялся) → обновляется он, дубликат не создаётся', async () => {
+  const file = join(tmpDir(), 'clip.mp4');
+  writeFileSync(file, 'data');
+  respond = (c) => {
+    if (c.method === 'GET') return { data: { files: [{ id: 'orphan1' }] } };
+    return c.method === 'PATCH' ? { headers: { location: 'https://upload.example/s4' } } : { data: { id: 'orphan1', version: '2', md5Checksum: 'y' } };
+  };
+  const out = await createDriveClient(request).uploadFile({ localPath: file, name: "it's.mp4", parentId: 'p1', mimeType: 'video/mp4' });
+  expect(out.id).toBe('orphan1');
+  expect(calls.map((c) => c.method)).toEqual(['GET', 'PATCH', 'PUT']);
+  expect(calls[0]!.params!.q).toBe("name = 'it\\'s.mp4' and 'p1' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false");
+  expect(calls[1]!.url).toBe('https://www.googleapis.com/upload/drive/v3/files/orphan1');
 });

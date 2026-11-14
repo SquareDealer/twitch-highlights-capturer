@@ -17,6 +17,23 @@ const MIME: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
+/**
+ * The app page runs with access to the main process, so it may only load its own code and the official
+ * Twitch player (script + frame).
+ */
+const APP_CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://player.twitch.tv",
+  'frame-src https://player.twitch.tv',
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "media-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join('; ');
+
 export interface LocalServer {
   port: number;
   /** `http://localhost:<port>` — the Twitch Embed accepts `parent=localhost`. */
@@ -62,6 +79,7 @@ async function sendFile(req: IncomingMessage, res: ServerResponse, path: string,
   const size = await fileSize(path);
   if (size === null) return end(res, 404);
   const base: Record<string, string> = { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+  if (type.startsWith('text/html')) base['Content-Security-Policy'] = APP_CSP;
   if (ranged) base['Accept-Ranges'] = 'bytes';
   const range = ranged ? parseRange(req.headers.range, size) : null;
   if (range === 'invalid') return end(res, 416, { 'Content-Range': `bytes */${size}` });

@@ -86,8 +86,21 @@ export function createProcessRunner(getSettings: () => Settings): ProcessRunner 
 
     spawnCapture(channel, epochDir) {
       const s = getSettings();
-      const streamlink = spawn(s.streamlinkPath, streamlinkArgs(channel, s.quality), { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-      const ffmpeg = spawn(s.ffmpegPath, ffmpegSegmentArgs(epochDir, s.segmentSeconds), { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+      const streamlink = spawn(s.streamlinkPath, streamlinkArgs(channel, s.quality), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const ffmpeg = spawn(s.ffmpegPath, ffmpegSegmentArgs(epochDir, s.segmentSeconds), { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+      // Keep the last line each process printed: it is the only explanation the user gets when capture dies.
+      const lastLine = { streamlink: '', ffmpeg: '' };
+      const follow = (name: keyof typeof lastLine, child: ChildProcess) => {
+        child.stderr?.setEncoding('utf8');
+        child.stderr?.on('data', (chunk: string) => {
+          const line = chunk.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
+          if (line) lastLine[name] = line.slice(0, 300);
+        });
+        child.stderr?.on('error', () => undefined);
+      };
+      follow('streamlink', streamlink);
+      follow('ffmpeg', ffmpeg);
+      const why = (name: keyof typeof lastLine) => (lastLine[name] ? `: ${lastLine[name]}` : '');
       streamlink.stdout!.pipe(ffmpeg.stdin!);
       // A dying peer must not crash the app with an unhandled EPIPE.
       streamlink.stdout!.on('error', () => undefined);
@@ -104,8 +117,9 @@ export function createProcessRunner(getSettings: () => Settings): ProcessRunner 
       };
       streamlink.on('error', (e) => report(`streamlink: ${e.message}`));
       ffmpeg.on('error', (e) => report(`ffmpeg: ${e.message}`));
-      streamlink.on('exit', (code) => report(`streamlink завершился (код ${code})`));
-      ffmpeg.on('exit', (code) => report(`ffmpeg завершился (код ${code})`));
+      // 'close' (not 'exit') so that everything the process wrote to stderr has been read.
+      streamlink.on('close', (code) => report(`streamlink завершился (код ${code})${why('streamlink')}`));
+      ffmpeg.on('close', (code) => report(`ffmpeg завершился (код ${code})${why('ffmpeg')}`));
 
       return {
         onExit(cb) {

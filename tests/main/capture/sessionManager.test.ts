@@ -16,6 +16,8 @@ class FakeRunner implements ProcessRunner {
   probeCalls = 0;
   spawned: Array<{ channel: string; epochDir: string; exit: (reason: string) => void; stopped: boolean }> = [];
   log: string[] = [];
+  /** Runs while the processes are being stopped (FFmpeg finalizing its last segment). */
+  onStop: (epochDir: string) => void = () => {};
 
   async probe() {
     this.probeCalls++;
@@ -32,6 +34,7 @@ class FakeRunner implements ProcessRunner {
       onExit: (f) => void (cb = f),
       stop: async () => {
         entry.stopped = true;
+        this.onStop(epochDir);
         this.log.push('procs.stop');
       },
     };
@@ -183,7 +186,7 @@ test('stop во время RECONNECTING прекращает повторы и �
   expect(repos.sessions.get(id)!.state).toBe('IDLE');
 });
 
-test('stop вызывает beforeStop до остановки процессов и до очистки буфера', async () => {
+test('stop: процессы останавливаются, последний сегмент индексируется, затем beforeStop — и только потом очистка буфера', async () => {
   build({
     beforeStop: async (s) => {
       runner.log.push(`beforeStop:${s.state}:segments=${ring.select(0, 0, 1e9).length}`);
@@ -193,8 +196,9 @@ test('stop вызывает beforeStop до остановки процессо�
   const dir = runner.spawned[0]!.epochDir;
   feed(dir, 0, 0, 2);
   await until(() => ring.latest(0) !== null);
+  runner.onStop = (epochDir) => feed(epochDir, 1, 2, 3.5); // written by FFmpeg on EOF
   await manager.stop();
-  expect(runner.log).toEqual(['beforeStop:STOPPING:segments=1', 'procs.stop']);
+  expect(runner.log).toEqual(['procs.stop', 'beforeStop:STOPPING:segments=2']);
   expect(ring.latest(0)).toBeNull();
   expect(existsSync(dir)).toBe(false);
   expect(timeSync.captureNow(Date.now())).toBeNull();
@@ -223,4 +227,28 @@ test('reconnect() перезапускает захват немедленно �
   expect(runner.spawned).toHaveLength(2);
   expect(runner.spawned[0]!.stopped).toBe(true);
   expect(manager.current()).toMatchObject({ state: 'RECONNECTING', epoch: 1 });
+});
+
+test('захват, который три раза подряд завершается без единого сегмента, даёт ERROR с причиной вместо бесконечных перезапусков', async () => {
+  await manager.start('foo');
+  runner.spawned[0]!.exit('ffmpeg завершился (код 1): Stream map 0:v:0 matches no streams');
+  await until(() => runner.spawned.length === 2);
+  runner.spawned[1]!.exit('ffmpeg завершился (код 1): Stream map 0:v:0 matches no streams');
+  await until(() => runner.spawned.length === 3);
+  runner.spawned[2]!.exit('ffmpeg завершился (код 1): Stream map 0:v:0 matches no streams');
+  await until(() => manager.current()?.state === 'ERROR');
+  expect(manager.current()!.error).toBe('Запись не запускается: ffmpeg завершился (код 1): Stream map 0:v:0 matches no streams');
+  await new Promise((r) => setTimeout(r, 30));
+  expect(runner.spawned).toHaveLength(3);
+});
+
+test('обычные обрывы после успешной записи не считаются сбоем запуска', async () => {
+  await manager.start('foo');
+  for (let i = 0; i < 4; i++) {
+    feed(runner.spawned[i]!.epochDir, 0, 0, 2);
+    await until(() => ring.latest(i) !== null);
+    runner.spawned[i]!.exit('streamlink завершился (код 1)');
+    await until(() => runner.spawned.length === i + 2);
+  }
+  expect(manager.current()!.state).toBe('RECONNECTING');
 });

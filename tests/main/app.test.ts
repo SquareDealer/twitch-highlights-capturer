@@ -14,6 +14,7 @@ let epochDirs: string[];
 let live: boolean;
 let nextSeq: number;
 let shown: string[];
+let hangEncode: boolean;
 
 const runner: ProcessRunner = {
   probe: async () => (live ? { live: true, streamId: '987654321' } : { live: false, reason: 'offline' }),
@@ -42,10 +43,14 @@ async function build(dbFile = join(root, 'thr.sqlite')) {
     send: (event, payload) => void sent.push({ event, payload } as Sent),
     mediaOrigin: () => 'http://localhost:1234',
     showItemInFolder: (p) => void shown.push(p),
+    shutdownTimeoutMs: 200,
     overrides: {
       runner, pollMs: 5,
       concat: async (segments, out) => writeFileSync(out, segments.join('\n')),
-      encode: async (a) => writeFileSync(a.output, `clip ${a.startMs}+${a.durationMs}`),
+      encode: async (a) => {
+        if (hangEncode) await new Promise(() => {});
+        writeFileSync(a.output, `clip ${a.startMs}+${a.durationMs}`);
+      },
       sleep: async () => {
         feed();
         await new Promise((r) => setTimeout(r, 15));
@@ -60,6 +65,7 @@ beforeEach(async () => {
   sent = [];
   epochDirs = [];
   shown = [];
+  hangEncode = false;
   live = true;
   nextSeq = 0;
   await build();
@@ -225,4 +231,66 @@ test('канал не в эфире → статус ERROR с текстом', a
 test('Drive не настроен: статус и понятная ошибка подключения', async () => {
   expect(await app.api.drive.status()).toEqual({ connected: false });
   expect(await app.api.drive.connect()).toEqual({ ok: false, error: 'Укажите Client ID и Client Secret в настройках' });
+});
+
+test('маркер, поставленный после F8 за пределами черновика, при остановке получает собственный черновик', async () => {
+  await record(5);
+  app.handleHotkey({ kind: 'replay' }, Date.now());
+  await until(() => notices().includes('info: Черновик сохранён'));
+  feed(60); // two more minutes of stream
+  await until(() => app.status().bufferedMs >= 120_000);
+  app.handleHotkey({ kind: 'marker', type: 4 }, Date.now());
+  const marker = events('marker:prompt')[0]!;
+  await app.api.capture.stop();
+  const drafts = await app.api.drafts.list();
+  expect(drafts).toHaveLength(2);
+  expect(drafts.some((d) => d.startMs <= marker.sourceTimeMs && marker.sourceTimeMs <= d.endMs)).toBe(true);
+});
+
+test('перезапуск не теряет маркеры второго черновика после экспорта первого', async () => {
+  await record(5);
+  app.handleHotkey({ kind: 'marker', type: 1 }, Date.now());
+  app.handleHotkey({ kind: 'replay' }, Date.now());
+  await until(() => notices().filter((n) => n === 'info: Черновик сохранён').length === 1);
+  feed(120);
+  await until(() => app.status().bufferedMs >= 240_000);
+  app.handleHotkey({ kind: 'marker', type: 2 }, Date.now());
+  app.handleHotkey({ kind: 'replay' }, Date.now());
+  await until(() => notices().filter((n) => n === 'info: Черновик сохранён').length === 2);
+  const [a, b] = await app.api.drafts.list();
+  expect((await app.api.clips.export({ draftId: a!.id, trimStartMs: 0, trimEndMs: 5000, title: 'first' })).ok).toBe(true);
+  await until(() => notices().some((n) => n.startsWith('info: Клип сохранён')));
+  await app.api.capture.stop();
+  await app.shutdown();
+  await build();
+  const reopened = (await app.api.drafts.open(b!.id))!;
+  expect(reopened.moment.markers.map((m) => m.type)).toEqual([2]);
+});
+
+test('F8 сразу перед остановкой записи не теряется', async () => {
+  await record(5);
+  app.handleHotkey({ kind: 'replay' }, Date.now());
+  await app.api.capture.stop();
+  expect(await app.api.drafts.list()).toHaveLength(1);
+});
+
+test('выход не зависает, если экспорт не завершается', async () => {
+  await record(5);
+  app.handleHotkey({ kind: 'replay' }, Date.now());
+  await until(() => notices().includes('info: Черновик сохранён'));
+  const [draft] = await app.api.drafts.list();
+  hangEncode = true;
+  await app.api.clips.export({ draftId: draft!.id, trimStartMs: 0, trimEndMs: 5000, title: 't' });
+  const started = Date.now();
+  await app.shutdown();
+  expect(Date.now() - started).toBeLessThan(3000);
+});
+
+test('Client Secret не возвращается в окно приложения', async () => {
+  await app.api.settings.set({ driveClientId: 'id', driveClientSecret: 'super-secret' });
+  const seen = await app.api.settings.get();
+  expect(seen.driveClientSecret).toBe('');
+  expect(seen.driveClientId).toBe('id');
+  expect(JSON.stringify(await app.api.settings.set({ markerOffsetMs: 10 }))).not.toContain('super-secret');
+  expect(app.settings.get().driveClientSecret).toBe('super-secret');
 });

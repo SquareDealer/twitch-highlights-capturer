@@ -28,6 +28,8 @@ export interface CaptureSessionManagerDeps {
 
 const RETRY_DELAYS_MS = [2000, 5000, 10_000, 30_000];
 const CLEANUP_INTERVAL_MS = 5000;
+/** Consecutive capture runs that die without producing a single segment before we stop retrying. */
+const MAX_EMPTY_RUNS = 3;
 
 /**
  * Owns the single capture session: one Streamlink and one FFmpeg process at a time.
@@ -39,6 +41,7 @@ export class CaptureSessionManager extends EventEmitter {
   private procs: CaptureProcs | null = null;
   private tailer: SegmentListTailer | null = null;
   private epochStartSec: number | null = null;
+  private emptyRuns = 0;
   private cleanupTimer: NodeJS.Timeout | null = null;
   /** Bumped whenever the running capture is superseded; stale async continuations check it and bail out. */
   private generation = 0;
@@ -60,6 +63,7 @@ export class CaptureSessionManager extends EventEmitter {
     if (this.stopping) await this.stopping;
     if (this.session) await this.stop();
     const gen = ++this.generation;
+    this.emptyRuns = 0;
     const session: CaptureSession = {
       id: randomUUID(),
       streamer: normalizeChannel(channel) ?? channel.trim(),
@@ -118,18 +122,25 @@ export class CaptureSessionManager extends EventEmitter {
 
   private async doStop(): Promise<void> {
     const session = this.session!;
-    this.generation++;
     const persisted = session.streamId !== '' || this.deps.sessions.get(session.id) !== null;
     this.setState('STOPPING');
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    this.cleanupTimer = null;
+    // Stop the processes first and index what FFmpeg flushed on EOF, so that the footage of the
+    // last seconds is still there when unsaved markers are turned into drafts.
+    const procs = this.procs;
+    const tailer = this.tailer;
+    this.procs = null;
+    this.tailer = null;
+    if (procs) await procs.stop().catch(() => undefined);
+    tailer?.poll();
+    tailer?.stop();
+    this.generation++; // from here on nothing may add segments or restart capture
     try {
-      this.tailer?.poll();
       await this.deps.beforeStop?.({ ...session });
     } catch {
       /* a failed auto-draft must not block shutdown */
     }
-    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
-    this.cleanupTimer = null;
-    await this.teardownProcs();
     await this.deps.ring.clearAll();
     this.deps.timeSync.reset();
     await rm(join(this.deps.settings.get().bufferDir, session.id), { recursive: true, force: true }).catch(() => undefined);
@@ -152,16 +163,29 @@ export class CaptureSessionManager extends EventEmitter {
     const epochDir = join(this.deps.settings.get().bufferDir, session.id, `e${epoch}`);
     mkdirSync(epochDir, { recursive: true });
     this.epochStartSec = null;
-    const tailer = new SegmentListTailer(join(epochDir, 'segments.csv'), (e) => this.onSegment(gen, epoch, epochDir, e), this.deps.pollMs ?? 250);
+    let produced = false;
+    const tailer = new SegmentListTailer(join(epochDir, 'segments.csv'), (e) => {
+      produced = true;
+      this.onSegment(gen, epoch, epochDir, e);
+    }, this.deps.pollMs ?? 250);
     this.tailer = tailer;
     tailer.start();
     const procs = this.deps.runner.spawnCapture(session.streamer, epochDir);
     this.procs = procs;
-    procs.onExit(() => {
-      if (gen !== this.generation) return;
+    procs.onExit((reason) => {
+      if (gen !== this.generation || this.session?.state === 'STOPPING') return;
       tailer.poll(); // pick up segments finished right before the exit
       this.generation++;
       const next = this.generation;
+      this.emptyRuns = produced ? 0 : this.emptyRuns + 1;
+      if (this.emptyRuns >= MAX_EMPTY_RUNS) {
+        // Not a network blip: the capture itself cannot start (bad quality name, FFmpeg error…).
+        this.emptyRuns = 0;
+        void this.teardownProcs().then(() => {
+          if (next === this.generation) this.fail(`Запись не запускается: ${reason}`);
+        });
+        return;
+      }
       void this.teardownProcs().then(() => this.reconnectLoop(next, false));
     });
   }
@@ -191,7 +215,8 @@ export class CaptureSessionManager extends EventEmitter {
     this.deps.ring.add(segment);
     this.deps.timeSync.onSegment(segment);
     void this.deps.ring.cleanup();
-    if (session.state !== 'RECORDING') this.setState('RECORDING');
+    // A segment flushed while stopping is indexed but must not flip the session back to RECORDING.
+    if (session.state !== 'RECORDING' && session.state !== 'STOPPING') this.setState('RECORDING');
   }
 
   private async reconnectLoop(gen: number, immediate: boolean): Promise<void> {

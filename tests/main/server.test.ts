@@ -46,6 +46,16 @@ test('GET / отдаёт index.html; неизвестный путь без ра
   expect((await get('/assets/missing.js')).status).toBe(404);
 });
 
+test('страница приложения отдаётся с CSP: скрипты и фреймы только свои и плеера Twitch', async () => {
+  const csp = String((await get('/')).headers['content-security-policy']);
+  expect(csp).toContain("default-src 'self'");
+  expect(csp).toContain("script-src 'self' https://player.twitch.tv");
+  expect(csp).toContain('frame-src https://player.twitch.tv');
+  expect(csp).toContain("object-src 'none'");
+  expect(csp).not.toContain("'unsafe-eval'");
+  expect(String((await get('/editor/x')).headers['content-security-policy'])).toBe(csp);
+});
+
 test('GET /media/drafts/<id>.mp4 с Range: bytes=10-19 → 206, 10 байт, корректный Content-Range', async () => {
   const r = await get('/media/drafts/abc-123.mp4', { Range: 'bytes=10-19' });
   expect(r.status).toBe(206);

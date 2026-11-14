@@ -75,6 +75,12 @@ export class JobQueue<P> {
     this.timer.unref?.();
   }
 
+  /** Stops picking up new jobs without waiting for the one in flight (it is re-queued by `recover` on next start). */
+  stopPolling(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+
   /** Stops polling and waits for the job in flight. */
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);

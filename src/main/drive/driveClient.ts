@@ -90,7 +90,19 @@ export function createDriveClient(request: DriveRequest): DriveClient {
           if (httpStatus(e) !== 404) throw e; // deleted in Drive: fall through and create it again
         }
       }
-      return upload(a);
+      // An earlier attempt may have uploaded the file without us learning its id (lost response, crash):
+      // reuse that copy instead of creating a second file with the same name.
+      const found = await request({
+        url: FILES,
+        params: {
+          q: `name = ${quote(a.name)} and ${quote(a.parentId)} in parents and mimeType != '${FOLDER_MIME}' and trashed = false`,
+          fields: 'files(id)',
+          spaces: 'drive',
+          pageSize: '1',
+        },
+      });
+      const orphan = (found.data as { files?: Array<{ id: string }> })?.files?.[0]?.id;
+      return upload(a, orphan);
     },
   };
 }

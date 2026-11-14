@@ -143,6 +143,12 @@ export class DriveAuth {
     await rm(this.deps.tokenFile, { force: true });
   }
 
+  /** Forget the stored tokens without contacting Google (they were revoked or expired). */
+  async invalidate(): Promise<void> {
+    this.cached = null;
+    await rm(this.deps.tokenFile, { force: true });
+  }
+
   /** An authorized client, or null while Drive is not connected. Refreshed tokens are persisted. */
   async client(): Promise<OAuthLike | null> {
     const { driveClientId: clientId, driveClientSecret: clientSecret } = this.deps.settings.get();
