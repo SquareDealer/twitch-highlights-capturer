@@ -27,6 +27,7 @@ export function makeWorld() {
   const moments = new MomentService({ repos, ring, timeSync, currentSession: () => session, settings, newId });
   const world = {
     repos, settings, clock, ring, timeSync, moments, unlinked, newId,
+    session: () => session,
     setSession(patch: Partial<CaptureSession> | null) {
       session = patch === null ? null : { ...session!, ...patch };
     },

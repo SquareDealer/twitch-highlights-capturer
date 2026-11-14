@@ -25,6 +25,8 @@ export interface Repos {
     forDraft(draftId: string): Moment | null;
     setStatus(id: string, s: MomentStatus): void;
     setDraft(id: string, draftId: string | null): void;
+    /** Detaches a deleted draft from every moment that referenced it. */
+    clearDraft(draftId: string): void;
     listByStatus(s: MomentStatus): Moment[];
   };
   markers: {
@@ -131,6 +133,9 @@ export function createRepos(db: Db): Repos {
     },
     setDraft: (id, draftId) => {
       db.prepare('UPDATE moments SET draft_id = ? WHERE id = ?').run(draftId, id);
+    },
+    clearDraft: (draftId) => {
+      db.prepare('UPDATE moments SET draft_id = NULL WHERE draft_id = ?').run(draftId);
     },
     listByStatus: (s) => (db.prepare('SELECT * FROM moments WHERE status = ? ORDER BY rowid').all(s) as Row[]).map((r) => toMoment(r)!),
   };

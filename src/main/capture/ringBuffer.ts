@@ -17,7 +17,8 @@ export interface RingBufferOptions {
   unlink?: (path: string) => Promise<void>;
 }
 
-const overlaps = (s: Segment, startMs: number, endMs: number) => s.endMs >= startMs && s.startMs <= endMs;
+/** Strict overlap: a segment that merely touches the range boundary holds no content from it. */
+const overlaps = (s: Segment, startMs: number, endMs: number) => s.endMs > startMs && s.startMs < endMs;
 
 /**
  * Index of recorded segments. Segments older than the retention window are deleted unless a pin

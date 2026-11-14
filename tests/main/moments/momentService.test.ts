@@ -35,8 +35,8 @@ test('повторное нажатие той же цифры создаёт в
 
 test('addMarker закрепляет [t − 30 000, t + 60 000] под id маркера', async () => {
   add(1, 100_000);
-  expect(await w.survives(0, 68_000)).toBe(true); // [68000,70000] touches t − 30 s
-  expect(w.ring.select(0, 0, 1e9).map((s) => s.startMs)).toEqual(Array.from({ length: 47 }, (_, i) => 68_000 + i * 2000));
+  expect(await w.survives(0, 70_000)).toBe(true);
+  expect(w.ring.select(0, 0, 1e9).map((s) => s.startMs)).toEqual(Array.from({ length: 45 }, (_, i) => 70_000 + i * 2000));
 });
 
 test.each([
