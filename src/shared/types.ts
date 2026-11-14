@@ -126,3 +126,58 @@ export interface ExportRequest {
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+
+export interface DriveStatus {
+  connected: boolean;
+  email?: string;
+}
+
+export interface OpenedDraft {
+  draft: Draft;
+  moment: Moment;
+  mediaUrl: string;
+}
+
+/** Events pushed from the main process to the renderer. */
+export interface ThrEvents {
+  'capture:status': CaptureStatus;
+  'marker:prompt': Marker;
+  'moment:changed': Moment | null;
+  'drafts:changed': null;
+  'clips:changed': null;
+  nav: { view: 'watch' | 'editor'; draftId?: string };
+  'editor:save': null;
+  notice: Notice;
+}
+
+/** Everything the renderer can ask the main process to do (`window.thr`). */
+export interface ThrApi {
+  capture: { start(channel: string): Promise<void>; stop(): Promise<void>; status(): Promise<CaptureStatus> };
+  player: { reportLatency(ms: number | null): Promise<void> };
+  ui: { setState(s: UiState): Promise<void> };
+  markers: {
+    setComment(id: string, comment: string): Promise<void>;
+    update(id: string, patch: { sourceTimeMs?: number; comment?: string; type?: MarkerType }): Promise<void>;
+    remove(id: string): Promise<void>;
+  };
+  moment: { active(): Promise<Moment | null>; discardActive(): Promise<void> };
+  drafts: {
+    list(): Promise<Draft[]>;
+    open(id: string | null): Promise<OpenedDraft | null>;
+    extend(id: string, by: { beforeMs: number; afterMs: number }): Promise<Draft>;
+    discard(id: string): Promise<void>;
+  };
+  clips: {
+    export(req: ExportRequest): Promise<Result<{ clipId: string }>>;
+    list(): Promise<Clip[]>;
+    failed(): Promise<Moment[]>;
+    showInFolder(id: string): Promise<void>;
+    sync(id: string): Promise<void>;
+    syncAll(): Promise<void>;
+  };
+  drive: { status(): Promise<DriveStatus>; connect(): Promise<Result<null>>; disconnect(): Promise<void> };
+  settings: { get(): Promise<Settings>; set(patch: Partial<Settings>): Promise<Settings> };
+  on<K extends keyof ThrEvents>(event: K, cb: (payload: ThrEvents[K]) => void): () => void;
+}
+
+export type ThrHandlers = Omit<ThrApi, 'on'>;
