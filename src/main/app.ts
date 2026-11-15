@@ -115,7 +115,7 @@ export function createApp(opts: AppOptions) {
   });
   const sessionManager: CaptureSessionManager = new CaptureSessionManager({
     runner: o.runner ?? createProcessRunner(() => settings.get()),
-    ring, timeSync, settings,
+    ring, timeSync, bufferDir: settings.get().bufferDir,
     sessions: repos.sessions,
     sleep: o.sleep,
     pollMs: o.pollMs,
@@ -217,7 +217,7 @@ export function createApp(opts: AppOptions) {
   const api: ThrHandlers = {
     capture: {
       async start(channel) {
-        await sessionManager.start(String(channel ?? ''));
+        await sessionManager.start(String(channel ?? ''), { quality: settings.get().quality });
         const session = sessionManager.current();
         if (session && session.state !== 'ERROR') settings.set({ lastChannel: session.streamer });
       },

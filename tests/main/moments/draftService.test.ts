@@ -217,7 +217,7 @@ test('discard удаляет файл, запись и pin, обнуляет dra
 });
 
 test('CaptureSessionManager.captureReplay делегирует в replay и возвращает id черновика', async () => {
-  const base = { runner: {} as never, ring: w.ring, timeSync: w.timeSync, sessions: w.repos.sessions, settings: w.settings };
+  const base = { runner: {} as never, ring: w.ring, timeSync: w.timeSync, sessions: w.repos.sessions, bufferDir: w.settings.get().bufferDir };
   const manager = new CaptureSessionManager({
     ...base,
     replay: async () => {

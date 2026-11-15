@@ -3,9 +3,9 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import type { Readable } from 'node:stream';
 import type { CaptureSession, CaptureState } from '@shared/types';
 import type { Repos } from '../db/repos';
-import type { SettingsStore } from '../settings';
 import { normalizeChannel, type CaptureProcs, type ProcessRunner } from './processes';
 import type { RingBufferManager } from './ringBuffer';
 import { SegmentListTailer, type SegmentListEntry } from './segmentList';
@@ -14,9 +14,11 @@ import type { TimeSynchronizer } from './timeSync';
 export interface CaptureSessionManagerDeps {
   runner: ProcessRunner;
   ring: RingBufferManager;
-  timeSync: TimeSynchronizer;
+  timeSync?: TimeSynchronizer;
   sessions: Repos['sessions'];
-  settings: SettingsStore;
+  bufferDir: string;
+  /** Total offline time after which the stream is considered over. */
+  offlineEndMs?: number;
   /** Runs while segments are still on disk (used to auto-build a draft from unsaved markers). */
   beforeStop?: (session: CaptureSession) => Promise<void>;
   /** F8 implementation; returns the id of the created draft. */
@@ -46,6 +48,7 @@ export class CaptureSessionManager extends EventEmitter {
   /** Bumped whenever the running capture is superseded; stale async continuations check it and bail out. */
   private generation = 0;
   private stopping: Promise<void> | null = null;
+  private opts = { quality: 'best', pcm: false };
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
 
@@ -59,9 +62,10 @@ export class CaptureSessionManager extends EventEmitter {
     return this.session ? { ...this.session } : null;
   }
 
-  async start(channel: string): Promise<void> {
+  async start(channel: string, opts: { quality?: string; pcm?: boolean } = {}): Promise<void> {
     if (this.stopping) await this.stopping;
     if (this.session) await this.stop();
+    this.opts = { quality: opts.quality ?? 'best', pcm: opts.pcm ?? false };
     const gen = ++this.generation;
     this.emptyRuns = 0;
     const session: CaptureSession = {
@@ -142,8 +146,8 @@ export class CaptureSessionManager extends EventEmitter {
       /* a failed auto-draft must not block shutdown */
     }
     await this.deps.ring.clearAll();
-    this.deps.timeSync.reset();
-    await rm(join(this.deps.settings.get().bufferDir, session.id), { recursive: true, force: true }).catch(() => undefined);
+    this.deps.timeSync?.reset();
+    await rm(join(this.deps.bufferDir, session.id), { recursive: true, force: true }).catch(() => undefined);
     if (persisted) this.deps.sessions.update(session.id, { state: 'IDLE', endedAt: new Date(this.now()).toISOString() });
     this.session = null;
     this.emit('state', null);
@@ -160,7 +164,7 @@ export class CaptureSessionManager extends EventEmitter {
   private spawnEpoch(gen: number): void {
     const session = this.session!;
     const epoch = session.epoch;
-    const epochDir = join(this.deps.settings.get().bufferDir, session.id, `e${epoch}`);
+    const epochDir = join(this.deps.bufferDir, session.id, `e${epoch}`);
     mkdirSync(epochDir, { recursive: true });
     this.epochStartSec = null;
     let produced = false;
@@ -170,8 +174,9 @@ export class CaptureSessionManager extends EventEmitter {
     }, this.deps.pollMs ?? 250);
     this.tailer = tailer;
     tailer.start();
-    const procs = this.deps.runner.spawnCapture(session.streamer, epochDir);
+    const procs = this.deps.runner.spawnCapture(session.streamer, epochDir, this.opts);
     this.procs = procs;
+    this.emit('epoch', { epoch, pcm: procs.pcm as Readable | null });
     procs.onExit((reason) => {
       if (gen !== this.generation || this.session?.state === 'STOPPING') return;
       tailer.poll(); // pick up segments finished right before the exit
@@ -213,7 +218,7 @@ export class CaptureSessionManager extends EventEmitter {
       completedAtWallMs: this.now(),
     };
     this.deps.ring.add(segment);
-    this.deps.timeSync.onSegment(segment);
+    this.deps.timeSync?.onSegment(segment);
     void this.deps.ring.cleanup();
     // A segment flushed while stopping is indexed but must not flip the session back to RECORDING.
     if (session.state !== 'RECORDING' && session.state !== 'STOPPING') this.setState('RECORDING');
@@ -224,11 +229,15 @@ export class CaptureSessionManager extends EventEmitter {
     this.session.epoch += 1;
     this.deps.sessions.update(this.session.id, { epoch: this.session.epoch });
     this.setState('RECONNECTING');
+    const offlineEndMs = this.deps.offlineEndMs ?? 300_000;
+    let waited = 0;
     for (let attempt = 0; ; attempt++) {
       if (!(immediate && attempt === 0)) {
         const delayIndex = immediate ? attempt - 1 : attempt;
-        await this.sleep(RETRY_DELAYS_MS[Math.min(delayIndex, RETRY_DELAYS_MS.length - 1)]!);
+        const delay = RETRY_DELAYS_MS[Math.min(delayIndex, RETRY_DELAYS_MS.length - 1)]!;
+        await this.sleep(delay);
         if (gen !== this.generation) return;
+        waited += delay;
       }
       let live = false;
       try {
@@ -239,6 +248,12 @@ export class CaptureSessionManager extends EventEmitter {
       if (gen !== this.generation) return;
       if (live) {
         this.spawnEpoch(gen);
+        return;
+      }
+      if (waited >= offlineEndMs) {
+        const ended = { ...this.session! };
+        this.emit('ended', ended);
+        await this.stop();
         return;
       }
     }

@@ -3,34 +3,36 @@ import { join } from 'node:path';
 import type { CaptureSession, CaptureState, Segment } from '@shared/types';
 import { openDb } from '../../../src/main/db';
 import { createRepos, type Repos } from '../../../src/main/db/repos';
-import type { CaptureProcs, ProcessRunner } from '../../../src/main/capture/processes';
+import { Readable } from 'node:stream';
+import type { CaptureOptions, CaptureProcs, ProcessRunner } from '../../../src/main/capture/processes';
 import { RingBufferManager } from '../../../src/main/capture/ringBuffer';
 import { CaptureSessionManager } from '../../../src/main/capture/sessionManager';
 import { TimeSynchronizer } from '../../../src/main/capture/timeSync';
-import { defaultSettings, SettingsStore } from '../../../src/main/settings';
 import { tmpDir } from '../../helpers';
 
 class FakeRunner implements ProcessRunner {
-  probes: Array<{ live: true; streamId: string } | { live: false; reason: string }> = [];
+  probes: Array<{ live: true; streamId: string; qualities: string[] } | { live: false; reason: string }> = [];
   binariesError: string | null = null;
   probeCalls = 0;
-  spawned: Array<{ channel: string; epochDir: string; exit: (reason: string) => void; stopped: boolean }> = [];
+  spawned: Array<{ opts: CaptureOptions; pcm: Readable; channel: string; epochDir: string; exit: (reason: string) => void; stopped: boolean }> = [];
   log: string[] = [];
   /** Runs while the processes are being stopped (FFmpeg finalizing its last segment). */
   onStop: (epochDir: string) => void = () => {};
 
   async probe() {
     this.probeCalls++;
-    return this.probes.shift() ?? { live: true as const, streamId: '987654321' };
+    return this.probes.shift() ?? { live: true as const, streamId: '987654321', qualities: ['best'] };
   }
   async checkBinaries() {
     return this.binariesError;
   }
-  spawnCapture(channel: string, epochDir: string): CaptureProcs {
+  spawnCapture(channel: string, epochDir: string, opts: CaptureOptions): CaptureProcs {
     let cb: (reason: string) => void = () => {};
-    const entry = { channel, epochDir, exit: (reason: string) => cb(reason), stopped: false };
+    const pcm = new Readable({ read() {} });
+    const entry = { opts, pcm, channel, epochDir, exit: (reason: string) => cb(reason), stopped: false };
     this.spawned.push(entry);
     return {
+      pcm: opts.pcm ? pcm : null,
       onExit: (f) => void (cb = f),
       stop: async () => {
         entry.stopped = true;
@@ -54,15 +56,16 @@ let sleeps: number[];
 let sleepGate: Promise<void> | null;
 let bufferDir: string;
 
-function build(extra: { beforeStop?: (s: CaptureSession) => Promise<void> } = {}) {
+function build(extra: { beforeStop?: (s: CaptureSession) => Promise<void>; offlineEndMs?: number } = {}) {
   manager = new CaptureSessionManager({
     runner, ring, timeSync, sessions: repos.sessions,
-    settings: new SettingsStore(repos.db, { ...defaultSettings({ videos: bufferDir, userData: bufferDir }), bufferDir }),
+    bufferDir,
     sleep: async (ms) => {
       sleeps.push(ms);
       if (sleepGate) await sleepGate;
     },
     pollMs: 5,
+    offlineEndMs: extra.offlineEndMs,
     ...extra,
   });
   manager.on('state', (s: CaptureSession | null) => states.push(s ? s.state : null));
@@ -251,4 +254,47 @@ test('обычные обрывы после успешной записи не 
     await until(() => runner.spawned.length === i + 2);
   }
   expect(manager.current()!.state).toBe('RECONNECTING');
+});
+
+test("'epoch' отдаёт pcm-поток при каждом (пере)подключении", async () => {
+  const epochs: Array<{ epoch: number; pcm: Readable | null }> = [];
+  manager.on('epoch', (e) => epochs.push(e));
+  await manager.start('foo', { pcm: true });
+  feed(runner.spawned[0]!.epochDir, 0, 0, 2);
+  await until(() => ring.latest(0) !== null);
+  runner.spawned[0]!.exit('boom');
+  await until(() => runner.spawned.length === 2);
+  expect(epochs.map((e) => e.epoch)).toEqual([0, 1]);
+  expect(epochs[0]!.pcm).toBe(runner.spawned[0]!.pcm);
+  expect(epochs[1]!.pcm).toBe(runner.spawned[1]!.pcm);
+});
+
+test('без pcm в событии epoch pcm = null', async () => {
+  const epochs: Array<{ epoch: number; pcm: Readable | null }> = [];
+  manager.on('epoch', (e) => epochs.push(e));
+  await manager.start('foo');
+  expect(epochs).toEqual([{ epoch: 0, pcm: null }]);
+});
+
+test('запрошенное качество передаётся в spawnCapture (по умолчанию best)', async () => {
+  await manager.start('foo', { quality: '720p60' });
+  expect(runner.spawned[0]!.opts).toEqual({ quality: '720p60', pcm: false });
+  await manager.start('foo');
+  expect(runner.spawned[1]!.opts.quality).toBe('best');
+});
+
+test("'ended' и stop, когда канал офлайн дольше offlineEndMs", async () => {
+  build({ offlineEndMs: 300_000 });
+  const ended: CaptureSession[] = [];
+  manager.on('ended', (s: CaptureSession) => ended.push(s));
+  await manager.start('foo');
+  feed(runner.spawned[0]!.epochDir, 0, 0, 2);
+  await until(() => ring.latest(0) !== null);
+  runner.probes = Array.from({ length: 50 }, () => ({ live: false as const, reason: 'offline' }));
+  runner.spawned[0]!.exit('eof');
+  await until(() => manager.current() === null);
+  expect(ended).toHaveLength(1);
+  expect(ended[0]!.streamer).toBe('foo');
+  expect(sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(300_000);
+  expect(runner.spawned).toHaveLength(1);
 });

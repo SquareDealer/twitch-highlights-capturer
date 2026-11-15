@@ -17,11 +17,11 @@ let shown: string[];
 let hangEncode: boolean;
 
 const runner: ProcessRunner = {
-  probe: async () => (live ? { live: true, streamId: '987654321' } : { live: false, reason: 'offline' }),
+  probe: async () => (live ? { live: true, streamId: '987654321', qualities: ['best'] } : { live: false, reason: 'offline' }),
   checkBinaries: async () => null,
   spawnCapture(_channel, epochDir): CaptureProcs {
     epochDirs.push(epochDir);
-    return { onExit: () => {}, stop: async () => {} };
+    return { onExit: () => {}, stop: async () => {}, pcm: null };
   },
 };
 

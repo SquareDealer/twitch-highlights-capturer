@@ -1,16 +1,16 @@
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CaptureSession, Draft, Result } from '@shared/types';
+import { concatSegments, type ConcatFn } from '../capture/concat';
 import type { RingBufferManager } from '../capture/ringBuffer';
 import type { TimeSynchronizer } from '../capture/timeSync';
 import type { Repos } from '../db/repos';
 import type { SettingsStore } from '../settings';
 import type { MomentService } from './momentService';
 
-export type ConcatFn = (segments: string[], outFile: string) => Promise<void>;
+export { concatSegments, type ConcatFn };
 
 export interface DraftServiceDeps {
   repos: Repos;
@@ -28,26 +28,6 @@ export interface DraftServiceDeps {
 
 const POLL_MS = 250;
 const TAIL_TIMEOUT_MS = 15_000;
-
-/** Joins MPEG-TS segments into one MP4 without re-encoding. */
-export function concatSegments(ffmpegPath: string): ConcatFn {
-  return async (segments, outFile) => {
-    const listFile = `${outFile}.txt`;
-    // concat demuxer syntax: single-quoted path, a literal quote is written as '\''
-    const list = segments.map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n');
-    await writeFile(listFile, `${list}\n`, 'utf8');
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const args = ['-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', '-y', outFile];
-        execFile(ffmpegPath, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, _out, stderr) =>
-          err ? reject(new Error(String(stderr).trim().split('\n').pop() || err.message)) : resolve(),
-        );
-      });
-    } finally {
-      await rm(listFile, { force: true });
-    }
-  };
-}
 
 /**
  * Drafts are MP4 files stitched from buffer segments; they survive restarts while raw segments do not.

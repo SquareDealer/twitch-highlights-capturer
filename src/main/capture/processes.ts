@@ -1,20 +1,30 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 import type { Settings } from '@shared/types';
 
-export type ProbeResult = { live: true; streamId: string } | { live: false; reason: string };
+export type ProbeResult = { live: true; streamId: string; qualities: string[] } | { live: false; reason: string };
 
 export interface CaptureProcs {
   /** Fires once, when either process exits. */
   onExit(cb: (reason: string) => void): void;
   stop(): Promise<void>;
+  /** 16 kHz mono s16le audio from FFmpeg stdout; null when the tap is off. */
+  pcm: Readable | null;
 }
+
+export interface CaptureOptions {
+  quality: string;
+  pcm: boolean;
+}
+
+export type RunnerSettings = Pick<Settings, 'streamlinkPath' | 'ffmpegPath' | 'segmentSeconds'>;
 
 export interface ProcessRunner {
   probe(channel: string): Promise<ProbeResult>;
   /** Returns a human-readable error, or null when both binaries are runnable. */
   checkBinaries(): Promise<string | null>;
-  spawnCapture(channel: string, epochDir: string): CaptureProcs;
+  spawnCapture(channel: string, epochDir: string, opts: CaptureOptions): CaptureProcs;
 }
 
 /** 'https://www.twitch.tv/Foo_Bar/' → 'foo_bar'; anything that is not a Twitch login → null. */
@@ -29,19 +39,21 @@ export function streamlinkArgs(channel: string, quality: string): string[] {
   return ['--stdout', '--twitch-low-latency', '--retry-streams', '0', `https://twitch.tv/${channel}`, quality];
 }
 
-export function ffmpegSegmentArgs(epochDir: string, segmentSeconds: number): string[] {
-  return [
+export function ffmpegSegmentArgs(epochDir: string, segmentSeconds: number, pcm: boolean): string[] {
+  const args = [
     '-hide_banner', '-loglevel', 'warning', '-fflags', '+genpts', '-i', 'pipe:0',
     '-map', '0:v:0', '-map', '0:a:0', '-c', 'copy',
     '-f', 'segment', '-segment_time', String(segmentSeconds), '-segment_format', 'mpegts', '-reset_timestamps', '0',
     '-segment_list', join(epochDir, 'segments.csv'), '-segment_list_type', 'csv',
     join(epochDir, 'seg_%06d.ts'),
   ];
+  if (pcm) args.push('-map', '0:a:0', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1');
+  return args;
 }
 
 /** Interprets the output of `streamlink --json <url>`. */
 export function parseProbeOutput(stdout: string): ProbeResult {
-  let data: { error?: unknown; metadata?: { id?: unknown } };
+  let data: { error?: unknown; metadata?: { id?: unknown }; streams?: unknown };
   try {
     data = JSON.parse(stdout);
   } catch {
@@ -50,7 +62,9 @@ export function parseProbeOutput(stdout: string): ProbeResult {
   if (!data || typeof data !== 'object') return { live: false, reason: 'streamlink вернул неожиданный ответ' };
   if (data.error) return { live: false, reason: String(data.error) };
   const id = data.metadata?.id;
-  return { live: true, streamId: id === undefined || id === null || id === '' ? 'unknown' : String(id) };
+  const names = data.streams && typeof data.streams === 'object' ? Object.keys(data.streams) : [];
+  const qualities = ['best', ...names.filter((n) => n !== 'best')];
+  return { live: true, streamId: id === undefined || id === null || id === '' ? 'unknown' : String(id), qualities };
 }
 
 function run(file: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string; error?: NodeJS.ErrnoException }> {
@@ -63,7 +77,7 @@ function run(file: string, args: string[], timeoutMs: number): Promise<{ ok: boo
 
 const exited = (p: ChildProcess) => p.exitCode !== null || p.signalCode !== null;
 
-export function createProcessRunner(getSettings: () => Settings): ProcessRunner {
+export function createProcessRunner(getSettings: () => RunnerSettings): ProcessRunner {
   return {
     async probe(channel) {
       const { stdout, error } = await run(getSettings().streamlinkPath, ['--json', `https://twitch.tv/${channel}`], 30_000);
@@ -84,10 +98,10 @@ export function createProcessRunner(getSettings: () => Settings): ProcessRunner 
       return null;
     },
 
-    spawnCapture(channel, epochDir) {
+    spawnCapture(channel, epochDir, opts) {
       const s = getSettings();
-      const streamlink = spawn(s.streamlinkPath, streamlinkArgs(channel, s.quality), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-      const ffmpeg = spawn(s.ffmpegPath, ffmpegSegmentArgs(epochDir, s.segmentSeconds), { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+      const streamlink = spawn(s.streamlinkPath, streamlinkArgs(channel, opts.quality), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const ffmpeg = spawn(s.ffmpegPath, ffmpegSegmentArgs(epochDir, s.segmentSeconds, opts.pcm), { windowsHide: true, stdio: ['pipe', opts.pcm ? 'pipe' : 'ignore', 'pipe'] });
       // Keep the last line each process printed: it is the only explanation the user gets when capture dies.
       const lastLine = { streamlink: '', ffmpeg: '' };
       const follow = (name: keyof typeof lastLine, child: ChildProcess) => {
@@ -122,6 +136,7 @@ export function createProcessRunner(getSettings: () => Settings): ProcessRunner 
       ffmpeg.on('close', (code) => report(`ffmpeg завершился (код ${code})${why('ffmpeg')}`));
 
       return {
+        pcm: opts.pcm ? ffmpeg.stdout : null,
         onExit(cb) {
           exitCb = cb;
           if (pendingReason !== null) cb(pendingReason);

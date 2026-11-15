@@ -22,7 +22,7 @@ test('streamlinkArgs: stdout, low latency, канал и качество', () =
 });
 
 test('ffmpegSegmentArgs: -c copy, segment_time 2, csv-список в каталоге эпохи', () => {
-  const args = ffmpegSegmentArgs(join('buf', 'e0'), 2);
+  const args = ffmpegSegmentArgs(join('buf', 'e0'), 2, false);
   const after = (flag: string) => args[args.indexOf(flag) + 1];
   expect(after('-c')).toBe('copy');
   expect(after('-segment_time')).toBe('2');
@@ -34,11 +34,25 @@ test('ffmpegSegmentArgs: -c copy, segment_time 2, csv-список в катал
 });
 
 test('parseProbeOutput: эфир, оффлайн, мусор', () => {
-  expect(parseProbeOutput('{"metadata":{"id":"987654321","author":"x"},"streams":{}}')).toEqual({ live: true, streamId: '987654321' });
-  expect(parseProbeOutput('{"streams":{}}')).toEqual({ live: true, streamId: 'unknown' });
+  expect(parseProbeOutput('{"metadata":{"id":"987654321","author":"x"},"streams":{}}')).toEqual({ live: true, streamId: '987654321', qualities: ['best'] });
+  expect(parseProbeOutput('{"streams":{}}')).toEqual({ live: true, streamId: 'unknown', qualities: ['best'] });
   expect(parseProbeOutput('{"error":"No playable streams found on this URL"}')).toEqual({ live: false, reason: 'No playable streams found on this URL' });
   expect(parseProbeOutput('not json')).toMatchObject({ live: false });
-  expect(parseProbeOutput('{"metadata":{"id":12345}}')).toEqual({ live: true, streamId: '12345' });
+  expect(parseProbeOutput('{"metadata":{"id":12345}}')).toEqual({ live: true, streamId: '12345', qualities: ['best'] });
+});
+
+test('ffmpegSegmentArgs: при pcm добавляет 16 кГц моно PCM на stdout', () => {
+  const a = ffmpegSegmentArgs('D:/b/e0', 2, true);
+  expect(a.slice(-9)).toEqual(['-map', '0:a:0', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1']);
+});
+
+test('ffmpegSegmentArgs: без pcm список аргументов прежний', () => {
+  expect(ffmpegSegmentArgs('D:/b/e0', 2, false)).not.toContain('pipe:1');
+});
+
+test('parseProbeOutput: имена качеств из streamlink --json', () => {
+  const r = parseProbeOutput(JSON.stringify({ metadata: { id: 42 }, streams: { '720p60': {}, best: {}, worst: {}, audio_only: {} } }));
+  expect(r).toEqual({ live: true, streamId: '42', qualities: ['best', '720p60', 'worst', 'audio_only'] });
 });
 
 describe.skipIf(!hasFfmpeg)('ffmpeg', () => {
@@ -48,7 +62,7 @@ describe.skipIf(!hasFfmpeg)('ffmpeg', () => {
       '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=d=6:r=30:s=320x240', '-f', 'lavfi', '-i', 'sine=d=6',
       '-g', '30', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', 'pipe:1',
     ]);
-    const segmenter = spawn('ffmpeg', ffmpegSegmentArgs(dir, 2));
+    const segmenter = spawn('ffmpeg', ffmpegSegmentArgs(dir, 2, false));
     source.stdout.pipe(segmenter.stdin);
     const code = await new Promise((resolve) => segmenter.on('exit', resolve));
     expect(code).toBe(0);
