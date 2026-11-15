@@ -37,6 +37,15 @@ class HttpError extends Error {
 /** Registry refusals that are conflicts with the current state rather than bad input. */
 const isConflict = (error: string) => /^(Достигнут лимит|Этот канал уже|Сначала остановите)/.test(error);
 
+/** Decodes a route parameter; a malformed escape such as %E0 is a client error, not a crash. */
+function decodeParam(v: string): string {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    throw new HttpError(400, BAD_REQUEST);
+  }
+}
+
 const publicClip = ({ mp4Path: _m, jsonPath: _j, ...rest }: FeedClip) => rest;
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -83,6 +92,22 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   return parsed as Record<string, unknown>;
 }
 
+/** Compares Origin and Host after normalization (case, default port); a malformed value counts as foreign. */
+function sameOrigin(origin: string, host: string | undefined): boolean {
+  try {
+    const o = new URL(origin);
+    return host !== undefined && o.host === new URL(`${o.protocol}//${host}`).host;
+  } catch {
+    return false;
+  }
+}
+
+/** Routes whose handlers read a JSON body. */
+const readsBody = (method: string, path: string) =>
+  (method === 'POST' && /^\/api\/(login|probe|streams)$/.test(path)) ||
+  (method === 'PUT' && path === '/api/mode') ||
+  (method === 'POST' && /^\/api\/clips\/[^/]+\/status$/.test(path));
+
 export async function startHttp(
   deps: HttpDeps,
   port: number,
@@ -91,11 +116,11 @@ export async function startHttp(
   const sessions = new Sessions(deps.config().password);
   const webRoot = resolve(deps.webDir);
   const failures = new Map<string, number[]>();
-  const sse = new Set<ServerResponse>();
+  const sse = new Map<ServerResponse, string>();
 
   const broadcast = (event: string, data: unknown): void => {
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const res of sse) res.write(frame);
+    for (const res of sse.keys()) res.write(frame);
   };
 
   const onStreams = (v: unknown) => broadcast('streams', v);
@@ -104,8 +129,15 @@ export async function startHttp(
   deps.registry.on('streams', onStreams);
   deps.registry.on('clip', onClip);
   deps.registry.on('notice', onNotice);
+  const closeStream = (res: ServerResponse): void => {
+    sse.delete(res);
+    res.end();
+  };
   const pinger = setInterval(() => {
-    for (const res of sse) res.write(': ping\n\n');
+    for (const [res, token] of sse) {
+      if (sessions.valid(token)) res.write(': ping\n\n');
+      else closeStream(res);
+    }
   }, PING_MS);
   pinger.unref();
 
@@ -140,6 +172,7 @@ export async function startHttp(
 
     if (method === 'POST' && path === '/api/logout') {
       sessions.logout(token!);
+      for (const [stream, t] of sse) if (t === token) closeStream(stream);
       return end(res, 204, { 'Set-Cookie': `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` });
     }
 
@@ -155,7 +188,7 @@ export async function startHttp(
         'X-Accel-Buffering': 'no',
       });
       res.write(': connected\n\n');
-      sse.add(res);
+      sse.set(res, token!);
       res.on('close', () => sse.delete(res));
       return;
     }
@@ -176,13 +209,13 @@ export async function startHttp(
 
     let m = /^\/api\/streams\/([^/]+)$/.exec(path);
     if (m && method === 'DELETE') {
-      await deps.registry.stop(decodeURIComponent(m[1]!));
+      await deps.registry.stop(decodeParam(m[1]!));
       return end(res, 204);
     }
 
     m = /^\/api\/streams\/([^/]+)\/manual-clip$/.exec(path);
     if (m && method === 'POST') {
-      const r = await deps.registry.manualClip(decodeURIComponent(m[1]!));
+      const r = await deps.registry.manualClip(decodeParam(m[1]!));
       return r.ok ? json(res, 201, publicClip(r.value)) : fail(res, 400, r.error);
     }
 
@@ -210,7 +243,7 @@ export async function startHttp(
     if (m && method === 'POST') {
       const body = await readJson(req);
       if (!CHANGEABLE.includes(body.status as ClipStatus)) return fail(res, 400, BAD_REQUEST);
-      const id = decodeURIComponent(m[1]!);
+      const id = decodeParam(m[1]!);
       const clip = deps.clips.get(id);
       if (!clip) return fail(res, 404, 'Клип не найден');
       if (clip.status === 'pending' || clip.status === 'error') {
@@ -260,15 +293,23 @@ export async function startHttp(
       const method = req.method ?? 'GET';
       const mutating = method !== 'GET' && method !== 'HEAD';
       if (mutating && req.headers.origin !== undefined) {
-        let originHost: string | null = null;
-        try {
-          originHost = new URL(req.headers.origin).host;
-        } catch {
-          /* malformed Origin is treated as foreign */
-        }
-        if (originHost === null || originHost !== req.headers.host) return fail(res, 403, 'Запрос с чужого origin отклонён');
+        if (!sameOrigin(req.headers.origin, req.headers.host)) return fail(res, 403, 'Запрос с чужого origin отклонён');
       }
       const url = new URL(req.url ?? '/', 'http://localhost');
+      if (Number(req.headers['content-length'] ?? 0) > MAX_BODY) {
+        return fail(res, 413, 'Слишком большой запрос', { Connection: 'close' });
+      }
+      if (req.headers['transfer-encoding'] !== undefined && !readsBody(method, url.pathname)) {
+        // Nobody reads this body: count it without buffering and cut the connection past the limit.
+        let size = 0;
+        req.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (size <= MAX_BODY) return;
+          if (res.headersSent) return void req.destroy();
+          fail(res, 413, 'Слишком большой запрос', { Connection: 'close' });
+          res.once('finish', () => req.destroy());
+        });
+      }
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
       if (url.pathname.startsWith('/media/')) {
         if (method !== 'GET' && method !== 'HEAD') return end(res, 405, { Allow: 'GET, HEAD' });
@@ -297,7 +338,7 @@ export async function startHttp(
         deps.registry.off('streams', onStreams);
         deps.registry.off('clip', onClip);
         deps.registry.off('notice', onNotice);
-        for (const res of sse) res.end();
+        for (const res of sse.keys()) res.end();
         sse.clear();
         server.close(() => done());
         server.closeAllConnections();

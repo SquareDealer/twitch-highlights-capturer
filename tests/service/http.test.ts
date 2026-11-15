@@ -374,3 +374,110 @@ it('does not serve files outside webDir', async () => {
     expect(r.body).not.toContain('leak');
   }
 });
+
+it('returns 400 for malformed percent-escapes in route params', async () => {
+  const c = await login();
+  expect((await api(c, 'DELETE', '/api/streams/%E0')).status).toBe(400);
+  expect((await api(c, 'POST', '/api/streams/%E0/manual-clip')).status).toBe(400);
+  const r = await api(c, 'POST', '/api/clips/%E0/status', { status: 'new' });
+  expect(r.status).toBe(400);
+  expect(((await r.json()) as { error: string }).error).toMatch(/[а-яё]/i);
+});
+
+it('compares Origin and Host after normalization', async () => {
+  const c = await login();
+  const body = { url: 'https://twitch.tv/alice' };
+  const mixed = await api(c, 'POST', '/api/probe', body, { Origin: `http://127.0.0.1:${http.port}`.toUpperCase().replace('HTTP', 'http') });
+  expect(mixed.status).toBe(200);
+  const bad = await api(c, 'POST', '/api/probe', body, { Origin: 'not a url' });
+  expect(bad.status).toBe(403);
+  // default port: Origin without a port equals Host with :80 (and https :443)
+  const viaRaw = (origin: string, host: string) =>
+    new Promise<number>((resolve, reject) => {
+      const req = request(
+        { host: '127.0.0.1', port: http.port, path: '/api/probe', method: 'POST', setHost: false, headers: { Host: host, Origin: origin, Cookie: c, 'Content-Type': 'application/json', 'Content-Length': String(JSON.stringify(body).length) } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode!);
+        },
+      );
+      req.on('error', reject);
+      req.end(JSON.stringify(body));
+    });
+  expect(await viaRaw('http://Example.com', 'example.com:80')).toBe(200);
+  expect(await viaRaw('https://example.com', 'EXAMPLE.com:443')).toBe(200);
+  expect(await viaRaw('http://example.com', 'example.com:8080')).toBe(403);
+});
+
+it('closes SSE streams of a token on logout, but not of other tokens', async () => {
+  const a = await login();
+  const b = await login();
+  const ra = await fetch(`${base}/api/events`, { headers: { Cookie: a } });
+  const rb = await fetch(`${base}/api/events`, { headers: { Cookie: b } });
+  const readerA = ra.body!.getReader();
+  const readerB = rb.body!.getReader();
+  await readerA.read();
+  await readerB.read();
+  expect((await api(a, 'POST', '/api/logout')).status).toBe(204);
+  while (!(await readerA.read()).done);
+  registry.emit('notice', { level: 'info', message: 'ещё жив' });
+  const { value } = await readerB.read();
+  expect(new TextDecoder().decode(value)).toContain('ещё жив');
+  await readerB.cancel();
+});
+
+it('closes SSE streams whose token is no longer valid at the ping', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'Date'] });
+  try {
+    const local = await startHttp(
+      { registry: registry as any, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir: join(root, 'web'), cuttingPaused: () => paused },
+      0,
+      '127.0.0.1',
+    );
+    try {
+      const r = await fetch(`http://127.0.0.1:${local.port}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: PASSWORD }) });
+      const cookie = r.headers.get('set-cookie')!.split(';')[0]!;
+      const res = await fetch(`http://127.0.0.1:${local.port}/api/events`, { headers: { Cookie: cookie } });
+      const reader = res.body!.getReader();
+      await reader.read();
+      vi.setSystemTime(Date.now() + 31 * 24 * 3600 * 1000);
+      vi.advanceTimersByTime(20_000);
+      while (!(await reader.read()).done);
+    } finally {
+      await local.close();
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('rejects an oversized Content-Length with 413 on any route', async () => {
+  const send = (method: string, path: string, headers: Record<string, string> = {}) =>
+    new Promise<number>((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port: http.port, path, method, headers: { 'Content-Length': String(70 * 1024), ...headers } }, (res) => {
+        res.resume();
+        resolve(res.statusCode!);
+      });
+      req.on('error', reject);
+      req.end(); // the declared body is never sent: the limit is enforced from the header
+    });
+  const c = await login();
+  expect(await send('POST', '/api/probe')).toBe(413); // unauthenticated
+  expect(await send('PUT', '/api/state', { Cookie: c })).toBe(413);
+  expect(await send('PATCH', '/index.html')).toBe(413); // would be 405
+  expect(await send('POST', '/nope')).toBe(413);
+});
+
+it('cuts off a chunked body on a route that does not read it', async () => {
+  const c = await login();
+  const closed = await new Promise<boolean>((resolve) => {
+    const req = request({ host: '127.0.0.1', port: http.port, path: '/api/state', method: 'POST', headers: { Cookie: c, 'Transfer-Encoding': 'chunked' } }, (res) => res.resume());
+    req.on('error', () => {});
+    req.on('close', () => resolve(true));
+    const timer = setTimeout(() => resolve(false), 3000);
+    req.on('close', () => clearTimeout(timer));
+    const chunk = Buffer.alloc(16 * 1024, 97);
+    for (let i = 0; i < 8; i++) req.write(chunk); // never ended: only the server can close the connection
+  });
+  expect(closed).toBe(true);
+});
