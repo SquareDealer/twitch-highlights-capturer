@@ -28,6 +28,17 @@ describe('service config', () => {
     expect(() => c.detector.chat.laughWords.forEach((w) => new RegExp(w, 'i'))).not.toThrow();
   });
 
+  it('default laugh regexes do not backtrack and still match laughs', () => {
+    const res = defaultConfig('D:/d').detector.chat.laughWords.map((w) => new RegExp(w, 'i'));
+    for (const re of res) {
+      const t = Date.now();
+      re.test('ах'.repeat(30) + '!');
+      expect(Date.now() - t).toBeLessThan(50);
+    }
+    for (const w of ['ахахах', 'хаха', 'хахахаха']) expect(res.some((re) => re.test(w))).toBe(true);
+    expect(res.some((re) => re.test('ах'))).toBe(false);
+  });
+
   it('merges file over defaults', () => {
     write({ password: 'x', preRollMs: 20000, detector: { chat: { massSpike: 7 } } });
     const c = loadConfig(file, 'D:/d');
