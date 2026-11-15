@@ -47,6 +47,9 @@ export function StreamCard({ stream }: { stream: StreamStatus }) {
         <strong>{stream.channel}</strong>
         <span className={`badge ${stream.state === 'ERROR' ? 'bad' : stream.state === 'RECORDING' ? 'ok' : ''}`}>{stateText}</span>
         {!stream.detector.running && <span className="badge warn">детектор не работает</span>}
+        {!stream.detector.running && stream.detector.lastError && (
+          <span className="muted detector-error" title={stream.detector.lastError}>{stream.detector.lastError}</span>
+        )}
         {stream.detector.chat === 'disconnected' && <span className="badge warn">нет чата</span>}
       </div>
       <div className="muted">

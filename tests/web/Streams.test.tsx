@@ -67,6 +67,17 @@ it('marks a stream whose detector is down and one without chat', () => {
   expect(screen.getByText('запись')).toBeTruthy();
 });
 
+it('shows why the detector is down next to the badge', () => {
+  view({ streams: [stream({ detector: { running: false, chat: 'unknown', restarts: 3, lastError: 'ModuleNotFoundError: No module named numpy' } })] });
+  expect(screen.getByText('детектор не работает')).toBeTruthy();
+  expect(screen.getByText('ModuleNotFoundError: No module named numpy')).toBeTruthy();
+});
+
+it('does not show a stale detector error while the detector runs', () => {
+  view({ streams: [stream({ detector: { running: true, chat: 'connected', restarts: 1, lastError: 'old failure' } })] });
+  expect(screen.queryByText('old failure')).toBeNull();
+});
+
 it('shows the cutting-paused banner', () => {
   view({ cutting: { paused: true, reason: 'Мало места на диске' } });
   expect(screen.getByText('Мало места на диске')).toBeTruthy();

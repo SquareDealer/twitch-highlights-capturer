@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { PassThrough } from 'node:stream';
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -217,6 +217,45 @@ describe('DetectorProcess', () => {
     await until(() => dp.health().running);
     await dp.stop();
     expect(dp.health().running).toBe(false);
+  });
+
+  it('stop() resolves only after the event the detector prints on the stop frame was emitted', async () => {
+    const { dp } = make(['--event-on-stop']);
+    const events: any[] = [];
+    dp.on('event', (e) => events.push(e));
+    dp.start();
+    await until(() => dp.health().running);
+    await dp.stop();
+    expect(events.map((e) => e.epoch)).toEqual([99]);
+  });
+
+  it('logs the exit code with the stderr tail and reports the last error in health', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void errors.push(a.join(' ')));
+    try {
+      const { dp } = make(['--fail', 'ModuleNotFoundError: No module named numpy'], { restartDelaysMs: [20] });
+      dp.start();
+      await until(() => dp.health().restarts >= 3);
+      expect(dp.health().lastError).toBe('ModuleNotFoundError: No module named numpy');
+      expect(errors[0]).toContain('код 3');
+      expect(errors[0]).toContain('ModuleNotFoundError: No module named numpy');
+      // the same failure repeating is logged once, not on every restart
+      expect(errors.length).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('reports a spawn error in health', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { dp } = make([], { command: 'no-such-python-xyz', args: [] });
+      dp.start();
+      await until(() => dp.health().lastError !== undefined);
+      expect(dp.health().lastError).toMatch(/ENOENT/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('fails softly when the command does not exist', async () => {

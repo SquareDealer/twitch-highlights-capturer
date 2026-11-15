@@ -18,6 +18,8 @@ export interface DetectorHealth {
   running: boolean;
   chat: 'connected' | 'disconnected' | 'unknown';
   restarts: number;
+  /** Why the detector last failed: its last stderr line, or the spawn error. */
+  lastError?: string;
 }
 
 export interface DetectorProcessOptions {
@@ -35,6 +37,7 @@ const FRAME_JSON = 1;
 const MAX_PCM_FRAME = 64 * 1024;
 const STDERR_LINES = 20;
 const PCM_BYTES_PER_MS = 32; // s16le mono 16 kHz
+const REPEAT_LOG_MS = 10 * 60_000; // the same failure is logged again only after this long
 
 function frame(kind: number, body: Buffer): Buffer {
   const head = Buffer.alloc(5);
@@ -79,8 +82,13 @@ export class DetectorProcess extends EventEmitter {
   private realign = false; // the next forwarded byte must start an s16 sample
   private pcm: Readable | null = null;
   private pcmListener: ((chunk: Buffer) => void) | null = null;
+  /** Resolves once every stdout line of the current process was emitted. */
+  private output: Promise<void> = Promise.resolve();
   private readonly pcmErrorListener = () => undefined;
   private stderrTail: string[] = [];
+  private lastError: string | undefined;
+  private generation = 0; // bumped on every launch: output of a replaced process is ignored
+  private lastLogged: { text: string; at: number } | null = null;
 
   constructor(private readonly opts: DetectorProcessOptions) {
     super();
@@ -98,7 +106,10 @@ export class DetectorProcess extends EventEmitter {
   }
 
   health(): DetectorHealth {
-    return { running: this.running, chat: this.chat, restarts: this.restarts };
+    return {
+      running: this.running, chat: this.chat, restarts: this.restarts,
+      ...(this.lastError !== undefined ? { lastError: this.lastError } : {}),
+    };
   }
 
   lastStderr(): string[] {
@@ -126,8 +137,11 @@ export class DetectorProcess extends EventEmitter {
     this.restartTimer = null;
     this.clearHeartbeat();
     const child = this.child;
+    const output = this.output;
     if (!child) return Promise.resolve();
-    return new Promise<void>((resolve) => {
+    // Resolves after the process exited AND every line it printed was emitted: the detector flushes
+    // its open event on the stop frame, and the caller cuts it right after stop().
+    const closed = new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
         try {
           child.kill();
@@ -146,6 +160,7 @@ export class DetectorProcess extends EventEmitter {
         /* ignore */
       }
     });
+    return Promise.all([closed, output]).then(() => undefined);
   }
 
   private detachPcm(): void {
@@ -168,32 +183,39 @@ export class DetectorProcess extends EventEmitter {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       });
-    } catch {
+    } catch (err) {
+      this.reportFailure(null, err);
       this.scheduleRestart();
       return;
     }
+    const gen = ++this.generation;
     this.child = child;
     this.blocked = false;
+    this.stderrTail = [];
     let ended = false;
-    const onEnd = () => {
+    const onEnd = (code: number | null, err?: unknown) => {
       if (ended) return;
       ended = true;
       if (this.child === child) this.child = null;
       this.clearHeartbeat();
       this.setRunning(false);
+      if (!this.stopped) this.reportFailure(code, err); // an exit we asked for is not a failure
       this.scheduleRestart();
     };
-    child.on('error', onEnd);
-    child.on('close', onEnd);
+    child.on('error', (err) => onEnd(null, err));
+    child.on('close', (code) => onEnd(code));
     child.stdin?.on('error', () => undefined);
     child.stdin?.on('drain', () => {
       if (this.child === child) this.blocked = false;
     });
     child.stderr?.on('data', (d: Buffer) => this.keepStderr(d));
+    this.output = Promise.resolve();
     if (child.stdout) {
-      createInterface({ input: child.stdout }).on('line', (line) => {
-        if (this.child === child) this.onLine(line);
+      const rl = createInterface({ input: child.stdout });
+      rl.on('line', (line) => {
+        if (this.generation === gen) this.onLine(line);
       });
+      this.output = new Promise<void>((resolve) => rl.once('close', resolve));
     }
     if (child.pid === undefined) return; // spawn failure: 'error' follows
     this.setRunning(true);
@@ -299,6 +321,20 @@ export class DetectorProcess extends EventEmitter {
     } catch {
       return true;
     }
+  }
+
+  /** Logs why the process ended (exit code + stderr tail) and keeps the reason for health(). */
+  private reportFailure(code: number | null, err?: unknown): void {
+    const errText = err instanceof Error ? err.message : err !== undefined ? String(err) : undefined;
+    const reason = errText ?? this.stderrTail.at(-1);
+    if (reason !== undefined) this.lastError = reason.slice(0, 300);
+    const head = errText !== undefined ? `Детектор не запустился: ${errText}` : `Детектор завершился (код ${code ?? 'нет'})`;
+    const text = [head, ...this.stderrTail].join('\n');
+    const now = Date.now();
+    // A detector that keeps crashing the same way is logged once per REPEAT_LOG_MS, not on every restart.
+    if (this.lastLogged && this.lastLogged.text === text && now - this.lastLogged.at < REPEAT_LOG_MS) return;
+    this.lastLogged = { text, at: now };
+    console.error(text);
   }
 
   private keepStderr(d: Buffer): void {

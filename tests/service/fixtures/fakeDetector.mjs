@@ -6,6 +6,8 @@
 //   --ignore-stop       ignore the stop frame
 //   --chat <state>      print a status line with this chat state at startup
 //   --event             print an event line when an epoch frame arrives
+//   --event-on-stop     print an event line (without a trailing newline) when the stop frame arrives, then exit
+//   --fail <text>       print <text> to stderr and exit(3) at startup
 import { appendFileSync } from 'node:fs';
 
 const argv = process.argv.slice(2);
@@ -14,6 +16,12 @@ const has = (name) => argv.includes(name);
 const logFile = opt('--log');
 const crashAfter = opt('--crash-after') ? Number(opt('--crash-after')) : Infinity;
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+const EVENT = { type: 'event', startMs: 1, endMs: 2, triggerTimeMs: 1, estimatedEventMs: 1, uncertaintyMs: 0, triggers: ['laugh'], confidence: 'normal', scores: { S: 1, C: 1, E: 1, U: 1, A: 1 }, signals: { chatSpike: 1, laughShare: 1, reactionShare: 0, deltaDb: 0 } };
+
+if (opt('--fail')) {
+  process.stderr.write(`Traceback (most recent call last):\n${opt('--fail')}\n`, () => process.exit(3));
+  await new Promise(() => {});
+}
 
 if (!has('--no-heartbeat')) {
   out({ type: 'heartbeat' });
@@ -45,6 +53,10 @@ process.stdin.on('data', (d) => {
           out({ type: 'event', epoch: msg.epoch, startMs: 1, endMs: 2, triggerTimeMs: 1, estimatedEventMs: 1, uncertaintyMs: 0, triggers: ['laugh'], confidence: 'normal', scores: { S: 1, C: 1, E: 1, U: 1, A: 1 }, signals: { chatSpike: 1, laughShare: 1, reactionShare: 0, deltaDb: 0 } });
           out({ type: 'nearmiss', tMs: 5, kind: 'x', missing: [], values: {} });
         }
+      }
+      if (msg.type === 'stop' && has('--event-on-stop')) {
+        process.stdout.write(JSON.stringify({ ...EVENT, epoch: 99 }), () => process.exit(0));
+        return;
       }
       if (msg.type === 'stop' && !has('--ignore-stop')) process.exit(0);
     }

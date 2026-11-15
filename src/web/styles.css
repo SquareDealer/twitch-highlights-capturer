@@ -38,6 +38,7 @@ button.link { background: none; border: none; color: var(--muted); padding: 4px;
 .notice.error { border-color: var(--bad); color: var(--bad); }
 .badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #232632; color: var(--muted); }
 .badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); } .badge.bad { color: var(--bad); }
+.detector-error { font-size: 12px; overflow-wrap: anywhere; }
 .switch { display: flex; gap: 8px; align-items: center; color: var(--muted); margin-top: 4px; }
 .stream-head, .clip-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .meter { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: var(--muted); font-size: 13px; }
