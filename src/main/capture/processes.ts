@@ -47,7 +47,10 @@ export function ffmpegSegmentArgs(epochDir: string, segmentSeconds: number, pcm:
     '-segment_list', join(epochDir, 'segments.csv'), '-segment_list_type', 'csv',
     join(epochDir, 'seg_%06d.ts'),
   ];
-  if (pcm) args.push('-map', '0:a:0', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1');
+  // PCM output only (its options follow its own -map): s16le has no timestamps, so the byte clock must
+  // follow them — aresample fills gaps in the audio timestamps with silence (async=1) and starts at t=0
+  // like the segment timeline (first_pts=0). The video is still only copied.
+  if (pcm) args.push('-map', '0:a:0', '-af', 'aresample=async=1:first_pts=0', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1');
   return args;
 }
 
