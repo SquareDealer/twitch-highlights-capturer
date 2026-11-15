@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -16,6 +17,7 @@ let clips: ReturnType<typeof createClipRepo>;
 let cfg: ServiceConfig;
 let session: CaptureSession;
 let concatCalls: { segs: string[]; out: string }[];
+let concatError = 'ffmpeg упал';
 let concatFail: number; // number of upcoming concat calls that fail
 let cutter: Cutter;
 let free: number;
@@ -57,7 +59,7 @@ function build(over: Partial<ServiceConfig> = {}, tailTimeoutMs = 200) {
       if (concatFail > 0) {
         concatFail--;
         writeFileSync(out, 'partial');
-        throw new Error('ffmpeg упал');
+        throw new Error(concatError);
       }
       writeFileSync(out, segs.join('\n'));
     },
@@ -76,6 +78,7 @@ beforeEach(() => {
   session = { id: 's1', streamer: 'alice', streamId: '42', state: 'RECORDING', startedAt: NOW.toISOString(), epoch: 1 };
   concatCalls = [];
   concatFail = 0;
+  concatError = 'ffmpeg упал';
   free = 1e12;
   paused = false;
   sleeps = [];
@@ -154,6 +157,43 @@ test('retries concat 3 times, then marks the clip as error and removes the .part
   expect(c).toMatchObject({ status: 'error', error: 'ffmpeg упал' });
   expect(existsSync(`${c.mp4Path}.part`)).toBe(false);
   expect(existsSync(c.mp4Path)).toBe(false);
+});
+
+test('emits paused when concat fails because the disk is full', async () => {
+  fill(1, 0, 70);
+  const reasons: string[] = [];
+  cutter.on('paused', (p: { reason: string }) => reasons.push(p.reason));
+  concatFail = 3;
+  concatError = 'write failed: No space left on device';
+  await cutter.onEvent(event());
+  const c = only();
+  expect(c.status).toBe('error');
+  expect(existsSync(`${c.mp4Path}.part`)).toBe(false);
+  expect(reasons).toEqual(['Мало свободного места на диске']);
+});
+
+test('emits paused after a failed cut when free space dropped below the reserve', async () => {
+  fill(1, 0, 70);
+  const reasons: string[] = [];
+  cutter.on('paused', (p: { reason: string }) => reasons.push(p.reason));
+  concatFail = 3;
+  const probe = vi.fn().mockResolvedValueOnce(1e12).mockResolvedValue(0);
+  cutter = new Cutter({ ring, clips, config: () => cfg, session: () => session, concat: async (_s, out) => { writeFileSync(out, 'x'); throw new Error('ffmpeg упал'); }, freeBytes: probe, now: () => NOW, sleep: async () => {}, tailTimeoutMs: 50 });
+  cutter.on('paused', (p: { reason: string }) => reasons.push(p.reason));
+  await cutter.onEvent(event());
+  expect(only().status).toBe('error');
+  expect(reasons).toEqual(['Мало свободного места на диске']);
+});
+
+test('manual clips do not count toward the hourly limiter', async () => {
+  fill(1, 0, 70);
+  cfg.maxClipsPerHour = 2;
+  for (let i = 0; i < 5; i++) expect((await cutter.manual()).ok).toBe(true);
+  await cutter.onEvent(event({ scores: { S: 0.1, C: 0, E: 0, U: 0, A: 0 } }));
+  await cutter.onEvent(event({ scores: { S: 0.2, C: 0, E: 0, U: 0, A: 0 } }));
+  expect(clips.list().filter((c) => c.triggers[0] === 'laugh')).toHaveLength(2);
+  await cutter.onEvent(event({ scores: { S: 0.05, C: 0, E: 0, U: 0, A: 0 } })); // over limit, below median
+  expect(clips.list()).toHaveLength(7);
 });
 
 test('succeeds when a later concat attempt works', async () => {

@@ -79,17 +79,17 @@ export function createClipRepo(db: Db) {
       });
       db.prepare(`UPDATE feed_clips SET ${keys.map((k) => `${PATCH_COLUMNS[k]} = ?`).join(', ')} WHERE id = ?`).run(...values, id);
     },
-    /** Clips created since the given time, excluding 'error'. */
+    /** Clips created since the given time, excluding 'error' and manual clips (they do not count toward the noise limiter). */
     countSince(sessionId: string, sinceIso: string): number {
       const r = db
-        .prepare("SELECT COUNT(*) AS n FROM feed_clips WHERE session_id = ? AND created_at >= ? AND status != 'error'")
+        .prepare("SELECT COUNT(*) AS n FROM feed_clips WHERE session_id = ? AND created_at >= ? AND status != 'error' AND triggers != '[\"manual\"]'")
         .get(sessionId, sinceIso) as { n: number };
       return r.n;
     },
     scoresSince(sessionId: string, sinceIso: string): number[] {
       return (
         db
-          .prepare("SELECT score FROM feed_clips WHERE session_id = ? AND created_at >= ? AND status != 'error' ORDER BY created_at")
+          .prepare("SELECT score FROM feed_clips WHERE session_id = ? AND created_at >= ? AND status != 'error' AND triggers != '[\"manual\"]' ORDER BY created_at")
           .all(sessionId, sinceIso) as { score: number }[]
       ).map((r) => r.score);
     },

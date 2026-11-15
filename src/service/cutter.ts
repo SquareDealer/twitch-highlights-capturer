@@ -27,6 +27,7 @@ export interface CutterDeps {
 const CONCAT_ATTEMPTS = 3;
 const RETRY_PAUSE_MS = 1000;
 const HOUR_MS = 3_600_000;
+const DISK_REASON = 'Мало свободного места на диске';
 
 const median = (xs: number[]): number => {
   const s = [...xs].sort((a, b) => a - b);
@@ -113,7 +114,7 @@ export class Cutter extends EventEmitter {
     } else {
       try {
         const free = await (this.deps.freeBytes ?? (() => defaultFreeBytes(cfg.libraryDir)))();
-        if (free < cfg.diskReserveBytes) reason = 'Мало свободного места на диске';
+        if (free < cfg.diskReserveBytes) reason = DISK_REASON;
       } catch (err) {
         console.error('cutter: cannot read free disk space', err);
       }
@@ -178,10 +179,22 @@ export class Cutter extends EventEmitter {
       clips.update(id, {
         status: 'error', error: err instanceof Error ? err.message : String(err), statusChangedAt: this.now().toISOString(),
       });
+      if (await this.diskIsFull(err, cfg)) this.emit('paused', { reason: DISK_REASON });
     } finally {
       ring.unpin(id);
     }
     return this.emitClip(id);
+  }
+
+  /** After a failed cut: was the disk the cause (ENOSPC), or is free space now below the reserve? */
+  private async diskIsFull(err: unknown, cfg: ServiceConfig): Promise<boolean> {
+    const e = err as { code?: string; message?: string };
+    if (e?.code === 'ENOSPC' || /no space left/i.test(e?.message ?? '')) return true;
+    try {
+      return (await (this.deps.freeBytes ?? (() => defaultFreeBytes(cfg.libraryDir)))()) < cfg.diskReserveBytes;
+    } catch {
+      return false;
+    }
   }
 
   private async concatWithRetry(paths: string[], out: string): Promise<void> {

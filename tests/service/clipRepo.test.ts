@@ -56,6 +56,14 @@ test("countSince и scoresSince не считают 'error'", () => {
   expect(repo.scoresSince('s1', '2026-11-15T09:00:00.000Z')).toEqual([1, 3]);
 });
 
+test("countSince и scoresSince не считают ручные клипы (triggers ровно ['manual'])", () => {
+  repo.insert(clip('m', { triggers: ['manual'], score: 0 }));
+  repo.insert(clip('d', { triggers: ['manual', 'laugh'], score: 2 }));
+  repo.insert(clip('a', { score: 1 }));
+  expect(repo.countSince('s1', '2026-11-15T09:00:00.000Z')).toBe(2);
+  expect(repo.scoresSince('s1', '2026-11-15T09:00:00.000Z').sort()).toEqual([1, 2]);
+});
+
 test('rejectedWithFiles возвращает отклонённые клипы с файлами', () => {
   repo.insert(clip('r1', { status: 'rejected', statusChangedAt: '2026-11-01T00:00:00.000Z' }));
   repo.insert(clip('r2', { status: 'rejected', statusChangedAt: '2026-11-14T00:00:00.000Z' }));
