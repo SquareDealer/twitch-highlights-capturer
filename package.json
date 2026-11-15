@@ -9,7 +9,9 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win nsis"
+    "dist": "electron-vite build && electron-builder --win nsis",
+    "web:build": "vite build --config vite.web.config.ts",
+    "web:dev": "vite --config vite.web.config.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",
