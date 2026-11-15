@@ -3,3 +3,8 @@ out/
 dist/
 .superpowers/
 *.log
+detector/.venv/
+detector/models/
+__pycache__/
+*.egg-info/
+.pytest_cache/
