@@ -29,6 +29,8 @@ const toClip = (r: Row): FeedClip => ({
 const PATCH_COLUMNS: Record<string, string> = {
   status: 'status',
   error: 'error',
+  startMs: 'start_ms',
+  endMs: 'end_ms',
   durationMs: 'duration_ms',
   bytes: 'bytes',
   fileDeleted: 'file_deleted',
@@ -69,7 +71,7 @@ export function createClipRepo(db: Db) {
     },
     update(
       id: string,
-      patch: Partial<Pick<FeedClip, 'status' | 'error' | 'durationMs' | 'bytes' | 'fileDeleted' | 'statusChangedAt'>>,
+      patch: Partial<Pick<FeedClip, 'status' | 'error' | 'startMs' | 'endMs' | 'durationMs' | 'bytes' | 'fileDeleted' | 'statusChangedAt'>>,
     ): void {
       const keys = Object.keys(patch).filter((k) => k in PATCH_COLUMNS && (patch as Row)[k] !== undefined);
       if (keys.length === 0) return;

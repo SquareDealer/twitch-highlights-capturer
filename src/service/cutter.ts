@@ -48,6 +48,10 @@ export class Cutter extends EventEmitter {
   private readonly newId: () => string;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly tailTimeoutMs: number;
+  /** Set by flush(): the stream is over, no tail will come any more. */
+  private closed = false;
+  /** Reason of the last 'paused' notice; null while cutting runs. */
+  private pausedReason: string | null = null;
 
   constructor(private readonly deps: CutterDeps) {
     super();
@@ -58,8 +62,15 @@ export class Cutter extends EventEmitter {
     this.tailTimeoutMs = deps.tailTimeoutMs ?? 20_000;
   }
 
-  /** Never throws: a failed cut turns the clip into 'error'. Resolves when the clip is finished. */
-  async onEvent(ev: DetectorEvent): Promise<void> {
+  /**
+   * Never throws: a failed cut turns the clip into 'error'. Resolves when the clip is finished.
+   * The work is registered synchronously, so a flush() called right after sees it.
+   */
+  onEvent(ev: DetectorEvent): Promise<void> {
+    return this.track(this.handleEvent(ev));
+  }
+
+  private async handleEvent(ev: DetectorEvent): Promise<void> {
     try {
       const cfg = this.deps.config();
       if (await this.checkPaused(cfg)) return;
@@ -67,18 +78,29 @@ export class Cutter extends EventEmitter {
       const preRoll = ev.confidence === 'low' && !ev.triggers.includes('audio') ? cfg.preRollLowConfidenceMs : cfg.preRollMs;
       const from = Math.max(0, ev.startMs - preRoll);
       const to = Math.min(ev.endMs + cfg.postRollMs, from + cfg.maxClipMs);
-      await this.track(this.cut(ev, from, to, true));
+      await this.cut(ev, from, to, true);
     } catch (err) {
       console.error('cutter: onEvent failed', err);
     }
   }
 
-  async manual(): Promise<Result<FeedClip>> {
+  manual(): Promise<Result<FeedClip>> {
+    return this.track(this.handleManual());
+  }
+
+  private async handleManual(): Promise<Result<FeedClip>> {
     try {
       const cfg = this.deps.config();
       if (await this.checkPaused(cfg)) return { ok: false, error: 'Нарезка приостановлена' };
-      const epoch = this.deps.session().epoch;
-      const last = this.deps.ring.latest(epoch);
+      const { ring } = this.deps;
+      let epoch = this.deps.session().epoch;
+      let last = ring.latest(epoch);
+      // Right after a reconnect the new epoch has no segments yet: save the end of the previous one.
+      const newest = last ? null : ring.latestEpoch();
+      if (newest !== null) {
+        epoch = newest;
+        last = ring.latest(newest);
+      }
       if (!last) return { ok: false, error: 'Буфер пуст: нечего нарезать' };
       const to = last.endMs;
       const from = Math.max(0, to - cfg.manualClipMs);
@@ -87,17 +109,21 @@ export class Cutter extends EventEmitter {
         triggers: ['manual'], confidence: 'normal', scores: { S: 0, C: 0, E: 0, U: 0, A: 0 },
         signals: { chatSpike: 0, laughShare: 0, reactionShare: 0, deltaDb: 0 },
       };
-      const clip = await this.track(this.cut(ev, from, to, false));
+      const clip = await this.cut(ev, from, to, false);
       return clip.status === 'error' ? { ok: false, error: clip.error ?? 'Не удалось нарезать клип' } : { ok: true, value: clip };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  /** Waits for all started clips without waiting for their tails: they are cut with what exists. */
+  /**
+   * The stream is over: waits for all started clips without waiting for their tails (they are cut with
+   * what exists). Events arriving later are cut at once from what exists too.
+   */
   async flush(): Promise<void> {
+    this.closed = true;
     for (const wake of [...this.wakers]) wake();
-    await Promise.allSettled([...this.active]);
+    while (this.active.size > 0) await Promise.allSettled([...this.active]);
   }
 
   private track<T>(p: Promise<T>): Promise<T> {
@@ -119,9 +145,19 @@ export class Cutter extends EventEmitter {
         console.error('cutter: cannot read free disk space', err);
       }
     }
-    if (reason === null) return false;
-    this.emit('paused', { reason });
+    if (reason === null) {
+      this.pausedReason = null;
+      return false;
+    }
+    this.notePaused(reason);
     return true;
+  }
+
+  /** Emits 'paused' only when the pause starts or its reason changes, not for every dropped event. */
+  private notePaused(reason: string): void {
+    if (reason === this.pausedReason) return;
+    this.pausedReason = reason;
+    this.emit('paused', { reason });
   }
 
   /** Noise limiter: past the hourly quota only events scoring above the median of recent clips get through. */
@@ -164,8 +200,11 @@ export class Cutter extends EventEmitter {
       await this.concatWithRetry(segs.map((s) => s.path), part);
       await rename(part, paths.mp4Path);
       const bytes = (await stat(paths.mp4Path)).size;
-      const durationMs = segs[segs.length - 1]!.endMs - segs[0]!.startMs;
-      const done: FeedClip = { ...base, status: 'new', bytes, durationMs };
+      // The MP4 holds whole segments: describe the footage actually cut, not the requested range.
+      const startMs = segs[0]!.startMs;
+      const endMs = segs[segs.length - 1]!.endMs;
+      const durationMs = endMs - startMs;
+      const done: FeedClip = { ...base, status: 'new', bytes, startMs, endMs, durationMs };
       const configVersion = createHash('sha1').update(JSON.stringify(cfg.detector)).digest('hex');
       try {
         await writeFile(paths.jsonPath, JSON.stringify({ ...done, event: ev, configVersion }, null, 2), 'utf8');
@@ -173,13 +212,13 @@ export class Cutter extends EventEmitter {
         await rm(paths.mp4Path, { force: true });
         throw err;
       }
-      clips.update(id, { status: 'new', bytes, durationMs });
+      clips.update(id, { status: 'new', bytes, startMs, endMs, durationMs });
     } catch (err) {
       await rm(part, { force: true }).catch(() => undefined);
       clips.update(id, {
         status: 'error', error: err instanceof Error ? err.message : String(err), statusChangedAt: this.now().toISOString(),
       });
-      if (await this.diskIsFull(err, cfg)) this.emit('paused', { reason: DISK_REASON });
+      if (await this.diskIsFull(err, cfg)) this.notePaused(DISK_REASON);
     } finally {
       ring.unpin(id);
     }
@@ -212,10 +251,10 @@ export class Cutter extends EventEmitter {
     throw last instanceof Error ? last : new Error(String(last));
   }
 
-  /** Resolves when the buffer reaches `to`, the epoch is over, the timeout expires or flush() is called. */
+  /** Resolves when the buffer reaches `to`, the epoch is over, the timeout expires or flush() was called. */
   private waitForTail(epoch: number, to: number): Promise<void> {
     const { ring } = this.deps;
-    const ready = () => (ring.latest(epoch)?.endMs ?? -1) >= to || (ring.latestEpoch() ?? epoch) > epoch;
+    const ready = () => this.closed || (ring.latest(epoch)?.endMs ?? -1) >= to || (ring.latestEpoch() ?? epoch) > epoch;
     if (ready()) return Promise.resolve();
     return new Promise<void>((resolve) => {
       const finish = () => {

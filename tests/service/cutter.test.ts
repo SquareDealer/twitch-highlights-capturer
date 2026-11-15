@@ -103,7 +103,10 @@ test('cuts [start−15s, end+10s] after the tail segments arrive', async () => {
   expect(lastRange()).toEqual([84, 120]);
   const c = only();
   expect(c.status).toBe('new');
-  expect([c.startMs, c.endMs, c.durationMs, c.score]).toEqual([85_000, 120_000, 36_000, 0.7]);
+  // the requested range starts at 85 s, mid-segment: the clip describes the footage actually cut (84–120 s)
+  expect([c.startMs, c.endMs, c.durationMs, c.score]).toEqual([84_000, 120_000, 36_000, 0.7]);
+  const j = JSON.parse(readFileSync(c.jsonPath, 'utf8'));
+  expect([j.startMs, j.endMs, j.durationMs]).toEqual([84_000, 120_000, 36_000]);
   expect(existsSync(c.mp4Path)).toBe(true);
   expect(c.bytes).toBeGreaterThan(0);
 });
@@ -117,14 +120,16 @@ test('uses the 30 s pre-roll for a low-confidence chat event', async () => {
 test('keeps 15 s for a low-confidence audio-only event', async () => {
   fill(1, 0, 70);
   await cutter.onEvent(event({ confidence: 'low', triggers: ['audio'] }));
-  expect(only().startMs).toBe(85_000);
+  expect(lastRange()[0]).toBe(84); // 85 s requested, cut from the segment that contains it
+  expect(only().startMs).toBe(84_000);
 });
 
 test('caps the clip at maxClipMs', async () => {
   fill(1, 0, 150);
   await cutter.onEvent(event({ startMs: 100_000, endMs: 190_000 }));
   const c = only();
-  expect([c.startMs, c.endMs]).toEqual([85_000, 85_000 + cfg.maxClipMs]);
+  expect(lastRange()).toEqual([84, 176]); // requested 85–175 s
+  expect([c.startMs, c.endMs]).toEqual([84_000, 176_000]);
 });
 
 test('writes clip.json next to the mp4 with event fields and configVersion', async () => {
@@ -284,6 +289,49 @@ test('manual() cuts the last 60 s of the current epoch', async () => {
   const c = only();
   expect([c.triggers, c.score, c.status, c.startMs, c.endMs]).toEqual([['manual'], 0, 'new', 140_000, 200_000]);
   expect(r.ok && r.value.id).toBe(c.id);
+});
+
+test('manual() falls back to the latest epoch with segments when the current one is empty', async () => {
+  fill(1, 0, 100);
+  session = { ...session, epoch: 2 }; // reconnected, no segment of epoch 2 yet
+  const r = await cutter.manual();
+  expect(r.ok).toBe(true);
+  const c = only();
+  expect([c.epoch, c.startMs, c.endMs]).toEqual([1, 140_000, 200_000]);
+});
+
+test("emits 'paused' only when the pause state changes", async () => {
+  fill(1, 0, 70);
+  const reasons: string[] = [];
+  cutter.on('paused', (p: { reason: string }) => reasons.push(p.reason));
+  paused = true;
+  await cutter.onEvent(event());
+  await cutter.onEvent(event());
+  await cutter.manual();
+  expect(reasons).toEqual(['Нарезка приостановлена']);
+  paused = false;
+  await cutter.onEvent(event());
+  paused = true;
+  await cutter.onEvent(event());
+  expect(reasons).toEqual(['Нарезка приостановлена', 'Нарезка приостановлена']);
+});
+
+test('flush() waits for an event that arrived in the same tick, without waiting for its tail', async () => {
+  build({}, 60_000);
+  fill(1, 0, 55); // tail up to 120 s never arrives
+  void cutter.onEvent(event());
+  await cutter.flush();
+  expect(only().status).toBe('new');
+  expect(lastRange()).toEqual([84, 110]);
+});
+
+test('an event arriving after flush() is cut at once from what exists', async () => {
+  build({}, 60_000);
+  fill(1, 0, 55);
+  await cutter.flush();
+  await cutter.onEvent(event()); // would hang for 60 s if it waited for the tail
+  expect(only().status).toBe('new');
+  expect(lastRange()).toEqual([84, 110]);
 });
 
 test('manual() reports an error when the buffer is empty', async () => {

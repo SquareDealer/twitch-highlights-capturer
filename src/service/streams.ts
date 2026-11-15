@@ -131,7 +131,15 @@ export class StreamRegistry extends EventEmitter {
     stream.session = stream.manager.current()!;
     this.streams.set(stream.session.id, stream);
     this.scheduleStatus();
-    await started;
+    try {
+      await started;
+    } catch (err) {
+      // Nothing may outlive a failed start: neither the capture session nor the Python process.
+      await stream.manager.stop().catch(() => undefined);
+      await stream.detector.stop().catch(() => undefined);
+      this.remove(stream);
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
     const session = stream.manager.current();
     if (!session || session.state === 'ERROR') {
       const error = session?.error ?? 'Запись остановлена';
@@ -207,9 +215,14 @@ export class StreamRegistry extends EventEmitter {
       offlineEndMs: cfg.offlineEndMs,
       sleep: this.deps.sleep,
       pollMs: this.deps.pollMs,
+      // The detector first: it flushes its open event on the stop frame, and stop() resolves only once
+      // that event was emitted. Then the cutter cuts everything with the footage that exists.
       beforeStop: async () => {
-        await cutter.flush();
-        await detector.stop();
+        try {
+          await detector.stop();
+        } finally {
+          await cutter.flush();
+        }
       },
     });
     const stream: Stream = {

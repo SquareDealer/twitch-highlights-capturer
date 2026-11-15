@@ -19,7 +19,9 @@ class FakeRunner implements ProcessRunner {
   async probe() {
     return this.probes.shift() ?? { live: true as const, streamId: '777', qualities: ['best', '720p60'] };
   }
+  checkThrows: Error | null = null;
   async checkBinaries() {
+    if (this.checkThrows) throw this.checkThrows;
     return null;
   }
   spawnCapture(channel: string, epochDir: string, opts: CaptureOptions): CaptureProcs {
@@ -35,6 +37,8 @@ class FakeDetector extends EventEmitter {
   attached: Array<{ pcm: Readable; epoch: number }> = [];
   started = false;
   stopped = false;
+  /** Runs inside stop(), like the real detector flushing its open event on the stop frame. */
+  onStop: (() => void) | null = null;
   constructor(readonly channel: string, private readonly log: string[]) {
     super();
   }
@@ -50,6 +54,7 @@ class FakeDetector extends EventEmitter {
   async stop() {
     this.stopped = true;
     this.log.push(`detector.stop ${this.channel}`);
+    this.onStop?.();
   }
 }
 
@@ -150,6 +155,15 @@ it('reports an offline channel and keeps nothing in the registry', async () => {
   expect(detectors.get('alice')!.stopped).toBe(true);
 });
 
+it('cleans up the stream and its detector when the capture manager rejects on start', async () => {
+  runner.checkThrows = new Error('spawn EACCES');
+  expect(await registry.start('twitch.tv/alice', 'best')).toEqual({ ok: false, error: 'spawn EACCES' });
+  expect(registry.list()).toEqual([]);
+  expect(detectors.get('alice')!.stopped).toBe(true);
+  runner.checkThrows = null;
+  expect((await registry.start('twitch.tv/alice', 'best')).ok).toBe(true); // nothing left blocks the channel
+});
+
 it('rejects a second stream in single mode with the limit message', async () => {
   await startOk('twitch.tv/alice');
   expect(await registry.start('twitch.tv/bob', 'best')).toEqual({
@@ -239,9 +253,25 @@ it('flushes pending clips before the buffer is cleared on stop', async () => {
   expect(concatCalls).toHaveLength(1);
   expect(concatCalls[0]!.existed).toBe(true);
   expect(clips.at(-1)!.status).toBe('new');
-  expect(log).toEqual(['concat', 'detector.stop alice']);
+  expect(log).toEqual(['detector.stop alice', 'concat']);
   expect(existsSync(join(dir, 'seg_000000.ts'))).toBe(false);
   expect(registry.list()).toEqual([]);
+});
+
+it('cuts the event the detector flushes on stop from what exists, before the buffer is cleared', async () => {
+  const s = await startOk('twitch.tv/alice');
+  const dir = spawnOf('alice').epochDir;
+  feed(dir, 0);
+  feed(dir, 1);
+  await until(() => registry.list()[0]!.bufferedMs === 4000);
+  const det = detectors.get('alice')!;
+  // the open event is only emitted when the detector gets the stop frame; its tail (10 s) never comes
+  det.onStop = () => det.emit('event', event({ endMs: 10_000 }));
+  await registry.stop(s.id);
+  expect(concatCalls).toHaveLength(1);
+  expect(concatCalls[0]!.existed).toBe(true);
+  expect(clips.at(-1)!.status).toBe('new');
+  expect(log).toEqual(['detector.stop alice', 'concat']);
 });
 
 it("removes the stream and emits a notice on 'ended'", async () => {
