@@ -77,11 +77,15 @@ export class Janitor extends EventEmitter {
   }
 
   private async deleteFile(c: FeedClip): Promise<void> {
+    // The list was read before earlier (awaited) deletions: re-check in the same tick as the unlink call,
+    // so a clip the user has just taken (or brought back to 'new') is never deleted.
+    const current = this.deps.clips.get(c.id);
+    if (!current || current.status !== 'rejected' || current.fileDeleted) return;
     try {
-      await (this.deps.unlink ?? fsUnlink)(c.mp4Path);
+      await (this.deps.unlink ?? fsUnlink)(current.mp4Path);
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-        console.error(`janitor: cannot delete ${c.mp4Path}`, err);
+        console.error(`janitor: cannot delete ${current.mp4Path}`, err);
         return;
       }
     }

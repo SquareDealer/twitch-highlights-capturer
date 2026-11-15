@@ -113,3 +113,17 @@ it('survives a file that is already gone', async () => {
   expect(clips.get('ok')!.fileDeleted).toBe(true);
   expect(unlinked).toEqual(['/c/ok.mp4']);
 });
+
+it('skips a clip whose status changed to taken after the list was read', async () => {
+  clips.insert(clip('a', { createdAt: iso(101), statusChangedAt: iso(30) }));
+  clips.insert(clip('b', { statusChangedAt: iso(30) }));
+  const unlink = async (p: string) => {
+    unlinked.push(p);
+    // while 'a' is being deleted the user takes 'b' (already in the janitor's list)
+    if (p === '/c/a.mp4') clips.update('b', { status: 'taken', statusChangedAt: NOW.toISOString() });
+  };
+  janitor = new Janitor({ clips, config: () => cfg, freeBytes: async () => free, unlink, now: () => NOW });
+  await janitor.run();
+  expect(unlinked).toEqual(['/c/a.mp4']);
+  expect(clips.get('b')).toMatchObject({ status: 'taken', fileDeleted: false });
+});

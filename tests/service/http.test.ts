@@ -266,6 +266,18 @@ it('refuses to change the status of a pending or error clip', async () => {
   expect(clips.get('c-pending')!.status).toBe('pending');
 });
 
+it('refuses to bring back a rejected clip whose file the janitor deleted, but keeps it changeable to rejected', async () => {
+  const c = await login();
+  clips.insert(clip('c-deleted', { status: 'rejected', fileDeleted: true }));
+  for (const status of ['new', 'taken']) {
+    const r = await api(c, 'POST', '/api/clips/c-deleted/status', { status });
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { error: string }).error).toBe('Файл клипа удалён');
+  }
+  expect(clips.get('c-deleted')!.status).toBe('rejected');
+  expect((await api(c, 'POST', '/api/clips/c-deleted/status', { status: 'rejected' })).status).toBe(200);
+});
+
 it('serves a clip with Range support and as an attachment when download=1', async () => {
   const c = await login();
   const full = await api(c, 'GET', '/media/clips/c-new.mp4');

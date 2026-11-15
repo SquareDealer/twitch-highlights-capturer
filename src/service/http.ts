@@ -249,6 +249,8 @@ export async function startHttp(
       if (clip.status === 'pending' || clip.status === 'error') {
         return fail(res, 409, clip.status === 'pending' ? 'Клип ещё нарезается' : 'Клип не удалось нарезать');
       }
+      // 'new'/'taken' promise a playable file; the janitor already deleted this one.
+      if (clip.fileDeleted && body.status !== 'rejected') return fail(res, 409, 'Файл клипа удалён');
       deps.clips.update(id, { status: body.status as ClipStatus, statusChangedAt: new Date().toISOString() });
       const updated = deps.clips.get(id)!;
       broadcast('clip', publicClip(updated));
