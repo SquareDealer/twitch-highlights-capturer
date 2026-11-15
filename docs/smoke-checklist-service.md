@@ -59,7 +59,7 @@ The best offset is where the detector's PCM timeline and the clip's MP4 timeline
 | **after the detector process was killed and restarted** | 0 | 286000–346000 | **+219 590 ms** | 0.999 |
 
 Result: within an epoch the detector timeline matches the video exactly and does not drift (0 ms at 3 and 15 min).
-**Failure found:** when the detector process restarts in the middle of an epoch, the new process counts PCM from 0
+**Failure found (fixed in e6cd832, re-checked live below — «2a. Re-check after the detector clock fix»):** when the detector process restarts in the middle of an epoch, the new process counts PCM from 0
 while the segment timeline continues, so all its event times are off by the time the epoch had run before the restart
 (219.6 s here) plus any PCM dropped while it was down. Events from a restarted detector would cut the wrong footage
 (or nothing, if that time is already outside the 300-s buffer) until the next reconnect starts a new epoch.
@@ -68,6 +68,35 @@ and sends the base offset with the `epoch` frame, or shifts event/signals/nearmi
 PCM dropped on back-pressure shifts the timeline the same way). The pilot should not be considered ready until it is fixed.
 The 30-minute repeat was shortened to 15 minutes; the repeat after a real 20-s network cut — not run, needs a human
 (the reconnect case was covered by killing streamlink, below).
+
+### 2a. Re-check after the detector clock fix (e6cd832 + final fix wave)
+
+Date: 2026-11-15, same machine, `npm run service` with `diskReserveBytes` lowered to 2 GB (the system disk had 9.8 GB
+free, so the default 10 GB reserve paused cutting), one stream `recrent` `best` (1080p60). Same objective method
+(`scripts/sync-check.md`): a poller stored every `signals` sample from `/api/state` every 200 ms; manual clips were
+downloaded and their audio correlated with the detector samples over −3…+3 s (10 ms step). The clip's `startMs` is now
+the start of its first segment (the footage actually cut), so the MP4 timeline starts exactly at `startMs`.
+
+| When | Epoch | Clip range (ms) | Best offset | r (r at 0) |
+|---|---|---|---|---|
+| detector python killed (`Stop-Process`) at tMs ≈ 150 s; clip ~95 s after the restart | 0 | 188000–248000 | **−80 ms** | 0.9985 (0.903) |
+| detector suspended for 6 s at tMs ≈ 290 s (stdin back-pressure → PCM dropped → `resync` frame); clip ~80 s after | 0 | 316000–376000 | **−80 ms** | 0.9955 (0.927) |
+| reference: new session, fresh detector process, no restart; clip at ~2.5 min | 0 | 90000–150000 | **−10 ms** | 0.9965 (0.992) |
+
+- After the kill the detector restarted within ~1 s (`restarts: 1`) and its `tMs` continued on stream time (151 s
+  right after the restart, no jump back to 0). The service logged `Детектор завершился (код 4294967295)` once
+  (the new exit log; no stderr tail because the process was killed).
+- During the 6-s suspension `tMs` stopped at 290 s, then jumped 293 → 297 s within 0.6 s of wall time (the resync
+  frame) and continued at 1 s/s; no heartbeat restart.
+- Result: after a restart and after a forced resync the detector timeline agrees with the video within **80 ms**
+  (tolerance 1.5 s), versus 219.6 s before the fix. The remaining −80 ms vs −10 ms for a fresh process is, as far as
+  we can tell, a property of the measurement, not of event times: a `signals` sample reports the last *complete*
+  100-ms block, and after a restart/resync the detector's block grid starts at the re-announced stream time
+  (`AudioAnalyzer.reset/skip_to`), not on a multiple of 100 ms, so the sampled block ends up to 100 ms before `tMs`.
+  Event times are taken from block start times on the same (correct) timeline. Not proven beyond this run.
+- Shutdown with Ctrl-C: «Получен SIGINT, сервис останавливается…», no streamlink/ffmpeg/python processes left, the
+  buffer directory empty. Stopping a stream via `DELETE /api/streams/:id` took 0.38 s.
+- No detector clip fired during this ~12-min run, so «last event flushed on stop» was verified by unit tests only.
 
 ### 3. Load
 
@@ -87,7 +116,7 @@ measured for auto clips; manual clips appear in 1.4 s (the clip only needs alrea
 ### 4. Failures
 
 - **Detector killed** (`Stop-Process` on the detector python): restarted within ~1 s (`restarts: 1`), chat reconnected,
-  recording not interrupted (`bufferedMs` kept growing). See the timeline offset failure in item 2.
+  recording not interrupted (`bufferedMs` kept growing). The timeline offset failure of item 2 is fixed: see 2a.
 - **Capture killed** (streamlink and its python killed, as a stand-in for a network cut): the session reconnected by
   itself, a new epoch 1 started, the detector got the new PCM (`tMs` restarted from 0 together with the segments) and
   kept producing signals; sync in the new epoch is 0 ms (item 2).
