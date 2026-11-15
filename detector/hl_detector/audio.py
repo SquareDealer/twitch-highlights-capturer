@@ -1,4 +1,5 @@
 """Audio features: 100 ms loudness blocks, robust voiced baseline, voice spikes."""
+import logging
 import math
 import statistics
 from collections import deque
@@ -10,6 +11,7 @@ import numpy as np
 SAMPLE_RATE = 16000
 MIN_BASE_BLOCKS = 50
 KEEP_SPIKES_MS = 120_000
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,6 +52,7 @@ class AudioAnalyzer:
         self._new_spikes: list = []
         self._recent: list = []
         self._cur: Optional[dict] = None
+        self._vad_fails = 0
 
     def reset(self) -> None:
         self._reset_state()
@@ -74,6 +77,9 @@ class AudioAnalyzer:
         try:
             p = float(self.vad.prob(x))
         except Exception:
+            self._vad_fails += 1
+            if self._vad_fails == 1 or self._vad_fails % 1000 == 0:
+                log.error("Сбой VAD (всего %d), вероятность речи = 0", self._vad_fails, exc_info=True)
             p = 0.0
 
         cut = t - self.base_ms

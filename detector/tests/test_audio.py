@@ -115,3 +115,17 @@ def test_reset_restarts_timeline():
     assert [f.t_ms for f in fr] == [0, 100, 200]
     assert not fr[0].warm
     assert a.recent_spikes(0, 10**9) == []
+
+
+def test_vad_failure_is_logged_once(caplog):
+    class BadVad(FakeVad):
+        def prob(self, samples):
+            raise RuntimeError("boom")
+
+    a, _ = mk(BadVad())
+    with caplog.at_level("ERROR", logger="hl_detector.audio"):
+        a.feed(tone(-30, 1.0))
+    fr = a.frames()
+    assert len(fr) == 10 and all(f.vad == 0.0 for f in fr)
+    recs = [r for r in caplog.records if r.name == "hl_detector.audio"]
+    assert len(recs) == 1 and recs[0].exc_info
