@@ -9,8 +9,16 @@ interface Pin {
   endMs: number;
 }
 
+type SegmentRows = Repos['segments'];
+
 export interface RingBufferOptions {
-  segments: Repos['segments'];
+  /** clearSession is required only together with sessionId. */
+  segments: Omit<SegmentRows, 'clearSession'> & Partial<Pick<SegmentRows, 'clearSession'>>;
+  /**
+   * Owner of the indexed segments when several buffers share the table: clearAll then removes only
+   * that session's rows. A getter, because the session id is assigned after the buffer is built.
+   */
+  sessionId?: () => string | undefined;
   retentionMs: number;
   maxPinnedBytes: number;
   now?: () => number;
@@ -101,7 +109,14 @@ export class RingBufferManager extends EventEmitter {
     this.byEpoch.clear();
     this.pins.clear();
     this.overLimit = false;
-    this.opts.segments.clear();
+    if (!this.opts.sessionId) {
+      this.opts.segments.clear();
+    } else {
+      const ids = new Set(all.map((s) => s.sessionId));
+      const own = this.opts.sessionId();
+      if (own) ids.add(own);
+      for (const id of ids) this.opts.segments.clearSession!(id);
+    }
     await Promise.all(all.map((s) => this.unlink(s.path).catch(() => undefined)));
   }
 

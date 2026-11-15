@@ -17,7 +17,12 @@ export interface Repos {
     update(id: string, patch: Partial<CaptureSession> & { endedAt?: string }): void;
     get(id: string): CaptureSession | null;
   };
-  segments: { insert(s: Segment): void; remove(sessionId: string, epoch: number, seq: number): void; clear(): void };
+  segments: {
+    insert(s: Segment): void;
+    remove(sessionId: string, epoch: number, seq: number): void;
+    clear(): void;
+    clearSession(sessionId: string): void;
+  };
   moments: {
     insert(m: Omit<Moment, 'markers'>): void;
     get(id: string): Moment | null;
@@ -171,6 +176,9 @@ export function createRepos(db: Db): Repos {
       },
       clear: () => {
         db.prepare('DELETE FROM buffer_segments').run();
+      },
+      clearSession: (sessionId) => {
+        db.prepare('DELETE FROM buffer_segments WHERE session_id = ?').run(sessionId);
       },
     },
     moments,
