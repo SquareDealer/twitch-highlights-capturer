@@ -138,9 +138,8 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
                 st["last"] = frames[-1]
 
     def reset_epoch(epoch: int, start_ms: int) -> None:
-        send_events(asm.flush())
+        send_events(asm.set_epoch(epoch, start_ms))  # the open event of the old epoch is flushed, not lost
         audio.reset(start_ms)
-        asm.set_epoch(epoch, start_ms)
         analyzer["chat"] = ChatAnalyzer(cfg)
         pending.clear()
         st.update(fed=start_ms * BYTES_PER_MS, offset=None, last=None, start=start_ms)

@@ -1,9 +1,12 @@
 """Trigger rules, event assembly and the ranking score."""
+import logging
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .chat import ChatFrame
 from .audio import VoiceSpike
+
+log = logging.getLogger("hl_detector")
 
 NEAR_MISS_EVERY_MS = 10_000
 LOW_AUDIO_ONLY_FACTOR = 0.7
@@ -83,11 +86,15 @@ class EventAssembler:
         self._cur: Optional[_Open] = None
         self._last_nm: dict = {}
 
-    def set_epoch(self, epoch: int, start_ms: int = 0) -> None:
-        """start_ms: stream time the detector starts at within the epoch (warmup counts from it)."""
+    def set_epoch(self, epoch: int, start_ms: int = 0) -> list:
+        """start_ms: stream time the detector starts at within the epoch (warmup counts from it).
+
+        Returns the event that was still open in the previous epoch (flushed, never dropped)."""
+        evs = self.flush()
         self.epoch = int(epoch)
         self.start_ms = int(start_ms)
         self._reset()
+        return evs
 
     # ---- helpers ----
     def _score(self, o: _Open, audio_only: bool) -> dict:
@@ -173,7 +180,7 @@ class EventAssembler:
             try:
                 self.on_chat_spike(now)
             except Exception:
-                pass
+                log.exception("on_chat_spike failed")
 
         # chat near-miss
         if not chat_kinds and frame.spike >= c["laughSpike"] and frame.messages >= c["minMessages"] \

@@ -134,3 +134,21 @@ def test_realistic_audio_event_has_positive_a():
     out, _, _ = run(laugh_run(106, 110), [sp])
     e = out[0][1]
     assert e.scores["A"] == 0.6 and e.signals["deltaDb"] == 12.0
+
+
+def test_set_epoch_returns_the_open_event_instead_of_dropping_it():
+    out, _, asm = run(laugh_run(106, 110), until=108)
+    assert out == []
+    evs = asm.set_epoch(1, 0)
+    assert len(evs) == 1 and evs[0].epoch == 0
+    assert asm.epoch == 1 and asm.flush() == []
+
+
+def test_on_chat_spike_exception_is_logged(caplog):
+    def boom(_t):
+        raise RuntimeError("callback failed")
+
+    asm = EventAssembler(DEFAULTS, on_chat_spike=boom)
+    with caplog.at_level("WARNING", logger="hl_detector"):
+        run(laugh_run(106, 110), until=108, asm=asm)
+    assert any("callback failed" in r.getMessage() or "callback failed" in str(r.exc_info) for r in caplog.records)
