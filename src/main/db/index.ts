@@ -45,6 +45,17 @@ const MIGRATIONS: string[] = [
   CREATE TABLE drive_folders (path_key TEXT PRIMARY KEY, drive_id TEXT NOT NULL);
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `,
+  `
+  CREATE TABLE feed_clips (
+    id TEXT PRIMARY KEY, session_id TEXT NOT NULL, streamer TEXT NOT NULL, stream_id TEXT NOT NULL,
+    epoch INTEGER NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL,
+    bytes INTEGER NOT NULL, triggers TEXT NOT NULL, confidence TEXT NOT NULL, score REAL NOT NULL,
+    signals TEXT NOT NULL, status TEXT NOT NULL, error TEXT, mp4_path TEXT NOT NULL, json_path TEXT NOT NULL,
+    file_deleted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, status_changed_at TEXT
+  );
+  CREATE INDEX feed_clips_streamer ON feed_clips (streamer, created_at);
+  CREATE INDEX feed_clips_status ON feed_clips (status);
+  `,
 ];
 
 /** Opens (and migrates) the application database. Use ':memory:' in tests. */
