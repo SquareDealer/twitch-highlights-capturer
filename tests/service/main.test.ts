@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { CaptureOptions, CaptureProcs, ProbeResult, ProcessRunner } from '../../src/main/capture/processes';
@@ -7,7 +7,7 @@ import { openDb } from '../../src/main/db';
 import { createClipRepo } from '../../src/service/clipRepo';
 import type { DetectorHealth, DetectorProcess } from '../../src/service/detectorProcess';
 import { runService } from '../../src/service/main';
-import type { StreamRegistryDeps } from '../../src/service/streams';
+import { StreamRegistry, type StreamRegistryDeps } from '../../src/service/streams';
 import type { DetectorEvent, FeedClip } from '../../src/service/types';
 import { tmpDir } from '../helpers';
 
@@ -130,6 +130,27 @@ it('creates a config with a generated password on first run', async () => {
   expect(printed.filter((l) => l.includes(saved.password as string))).toHaveLength(1);
   expect(printed).toContain(`Сервис запущен: http://localhost:${service.port}`);
   expect(existsSync(join(dataDir, 'service.sqlite'))).toBe(true);
+});
+
+it('refuses to start when bufferDir would wipe the data directory', async () => {
+  writeConfig({ bufferDir: dataDir });
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(join(dataDir, 'keep.txt'), 'x');
+  await expect(runService({ configFile, dataDir, overrides: overrides(), host: '127.0.0.1' })).rejects.toThrow(/^Папка буфера/);
+  expect(existsSync(join(dataDir, 'keep.txt'))).toBe(true);
+});
+
+it('closes http and the database even when stopping the streams fails', async () => {
+  writeConfig();
+  const base = await start();
+  const spy = vi.spyOn(StreamRegistry.prototype, 'shutdown').mockRejectedValueOnce(new Error('boom'));
+  const svc = service!;
+  service = null;
+  await expect(svc.shutdown()).rejects.toThrow('boom');
+  spy.mockRestore();
+  await expect(fetch(`${base}/api/state`)).rejects.toThrow();
+  // the database file is closed: it can be removed
+  rmSync(join(dataDir, 'service.sqlite'));
 });
 
 it('marks clips left pending by a previous run as error', async () => {

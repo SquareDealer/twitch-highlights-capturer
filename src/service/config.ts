@@ -131,6 +131,28 @@ export function loadConfig(file: string, dataDir: string): ServiceConfig {
   return cfg;
 }
 
+/**
+ * bufferDir is wiped recursively at startup. Returns why that would be dangerous (it is a filesystem
+ * root, or equals or contains dataDir or libraryDir), or null when it is safe.
+ */
+export function bufferDirProblem(cfg: Pick<ServiceConfig, 'bufferDir' | 'dataDir' | 'libraryDir'>): string | null {
+  const norm = (p: string) => {
+    const r = path.resolve(p);
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  };
+  const buffer = norm(cfg.bufferDir);
+  const containsOrEquals = (other: string) => {
+    const rel = path.relative(buffer, norm(other));
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  };
+  const why =
+    path.parse(buffer).root === buffer ? 'это корень диска'
+    : containsOrEquals(cfg.dataDir) ? `она совпадает с папкой данных (${cfg.dataDir}) или содержит её`
+    : containsOrEquals(cfg.libraryDir) ? `она совпадает с папкой клипов (${cfg.libraryDir}) или содержит её`
+    : null;
+  return why && `Папка буфера ${cfg.bufferDir} очищается при каждом запуске, а ${why}. Укажите в bufferDir отдельную папку`;
+}
+
 export function saveConfigPatch(file: string, patch: Partial<Pick<ServiceConfig, 'multiStream'>>): void {
   const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
   const base = isObj(raw) ? raw : {};

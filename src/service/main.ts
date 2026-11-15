@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { openDb } from '../main/db';
 import { createClipRepo } from './clipRepo';
-import { defaultConfig, loadConfig, type ServiceConfig } from './config';
+import { bufferDirProblem, defaultConfig, loadConfig, type ServiceConfig } from './config';
 import { publicClip, startHttp } from './http';
 import { Janitor } from './janitor';
 import { StreamRegistry, type StreamRegistryDeps } from './streams';
@@ -47,6 +47,9 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
   // One shared object: StreamRegistry.setMultiStream mutates it in place.
   const cfg: ServiceConfig = loadConfig(configFile, dataDir);
   const config = () => cfg;
+  // Checked before anything touches the disk: bufferDir is wiped below.
+  const unsafeBuffer = bufferDirProblem(cfg);
+  if (unsafeBuffer) throw new Error(unsafeBuffer);
 
   mkdirSync(cfg.dataDir, { recursive: true });
   const db = openDb(join(cfg.dataDir, 'service.sqlite'));
@@ -88,10 +91,17 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
   let stopping: Promise<void> | null = null;
   const shutdown = () =>
     (stopping ??= (async () => {
-      await registry.shutdown(); // flushes pending clips
-      janitor.stop();
-      await http.close();
-      db.close();
+      // Each step runs even if an earlier one fails: http and the database must always be closed.
+      try {
+        await registry.shutdown(); // flushes pending clips
+      } finally {
+        janitor.stop();
+        try {
+          await http.close();
+        } finally {
+          db.close();
+        }
+      }
     })());
   return { port: http.port, shutdown };
 }

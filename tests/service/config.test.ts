@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { defaultConfig, loadConfig, saveConfigPatch } from '../../src/service/config';
+import { bufferDirProblem, defaultConfig, loadConfig, saveConfigPatch } from '../../src/service/config';
 
 let dir: string;
 let file: string;
@@ -70,5 +70,34 @@ describe('service config', () => {
     write({ password: 'x', port: 9000, extra: { a: 1 } });
     saveConfigPatch(file, { multiStream: true });
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ password: 'x', port: 9000, extra: { a: 1 }, multiStream: true });
+  });
+});
+
+describe('bufferDirProblem', () => {
+  const base = path.resolve('/srv/hl/data');
+  const cfg = (bufferDir: string, libraryDir = path.join(base, 'library')) => ({ ...defaultConfig(base), libraryDir, bufferDir });
+
+  it('accepts the default layout and a separate directory', () => {
+    expect(bufferDirProblem(defaultConfig(base))).toBeNull();
+    expect(bufferDirProblem(cfg(path.resolve('/tmp/hl-buffer')))).toBeNull();
+    expect(bufferDirProblem(cfg(path.join(base, 'library-buffer')))).toBeNull(); // a sibling sharing a prefix
+  });
+
+  it('refuses a directory that would wipe the data, the library or a whole disk', () => {
+    const bad = [
+      base, // equals dataDir
+      path.join(base, 'library'), // equals libraryDir
+      path.dirname(base), // parent of dataDir
+      path.resolve('/srv'), // grandparent
+      path.parse(base).root, // filesystem root
+      path.join(base, 'library', '..'), // equals dataDir once resolved
+    ];
+    for (const b of bad) expect(bufferDirProblem(cfg(b)), b).toMatch(/^Папка буфера/);
+    // the library outside dataDir is protected as well
+    expect(bufferDirProblem(cfg(path.resolve('/media'), path.resolve('/media/clips')))).toMatch(/^Папка буфера/);
+  });
+
+  it.runIf(process.platform === 'win32')('compares paths case-insensitively on Windows', () => {
+    expect(bufferDirProblem(cfg(base.toUpperCase()))).toMatch(/^Папка буфера/);
   });
 });
