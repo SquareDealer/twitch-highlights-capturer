@@ -89,3 +89,88 @@ def test_chat_disconnect_is_reported_and_audio_still_works():
     lines = run(pcm_frames(speech(5)) + ctl({"type": "stop"}), chat=chat)
     assert {"type": "status", "chat": "disconnected"} in lines
     assert sum(1 for l in lines if l["type"] == "signals") == 5
+
+
+class _Script:
+    """stdin double: serves bytes / waits for / sets threading events in order, so thread interleaving is deterministic."""
+
+    def __init__(self, steps):
+        self.steps, self.buf = list(steps), b""
+
+    def read(self, n):
+        while not self.buf:
+            if not self.steps:
+                return b""
+            kind, v = self.steps.pop(0)
+            if kind == "wait":
+                assert v.wait(10)
+            elif kind == "set":
+                v.set()
+            else:
+                self.buf = v
+        out, self.buf = self.buf[:n], self.buf[n:]
+        return out
+
+
+class _ScriptedChat:
+    def __init__(self, steps):
+        self.steps = steps
+
+    async def messages(self):
+        import asyncio
+
+        for kind, v in self.steps:
+            if kind == "msg":
+                yield v
+            elif kind == "set":
+                v.set()
+            else:
+                while not v.is_set():
+                    await asyncio.sleep(0.005)
+
+
+def _frame(kind, body):
+    out = io.BytesIO()
+    write_frame(out, kind, body)
+    return out.getvalue()
+
+
+def test_chat_time_translation_drops_early_and_resets_with_epoch():
+    import threading
+
+    W = 1_700_000_000_000
+    g = {i: threading.Event() for i in range(1, 8)}
+    laugh = "ахахах"
+
+    def msgs(n, wall):
+        return [("msg", (wall, "u%d" % i, laugh)) for i in range(n)]
+
+    # constant clock: offset = W - audio_ms after the latest PCM frame (minimum per epoch), applied at message receipt
+    chat = _ScriptedChat(
+        [("msg", (W + 2000, "early", laugh)), ("set", g[1]), ("wait", g[2])]
+        + msgs(10, W + 2000)  # offset at receipt W-10000 -> t=12000
+        + [("set", g[3]), ("wait", g[4]), ("msg", (W + 1000, "stale", laugh)), ("set", g[5]), ("wait", g[6])]
+        + msgs(3, W + 1000)  # epoch 1: offset at receipt W-5000 -> t=6000
+        + [("set", g[7])]
+    )
+    stdin = _Script([
+        ("wait", g[1]), ("data", _frame(0, speech(10))), ("set", g[2]), ("wait", g[3]),
+        ("data", _frame(0, speech(5))), ("data", ctl({"type": "epoch", "epoch": 1})), ("set", g[4]), ("wait", g[5]),
+        ("data", _frame(0, speech(5))), ("set", g[6]), ("wait", g[7]),
+        ("data", _frame(0, speech(2))), ("data", ctl({"type": "stop"})),
+    ])
+    out = io.StringIO()
+    rc = main(["--channel", "x", "--config", CFG], stdin=stdin, stdout=out, chat=chat, vad=FakeVad(), clock=lambda: W)
+    assert rc == 0
+    lines = [json.loads(l) for l in out.getvalue().splitlines()]
+    sig = [l for l in lines if l["type"] == "signals"]
+    split = next(k for k in range(1, len(sig)) if sig[k]["tMs"] < sig[k - 1]["tMs"])
+    e0, e1 = sig[:split], sig[split:]
+    # epoch 0: 10 counted, the pre-PCM message dropped (it would have made 11)
+    assert max(s["messages"] for s in e0) == 10
+    assert [s for s in e0 if s["tMs"] == 15000][0]["messages"] == 10
+    assert [s for s in e0 if s["tMs"] == 15000][0]["laughShare"] == 1.0
+    # epoch 1: offset was reset (stale offset would put them at t=14000), the pre-PCM stale message dropped
+    assert e1[0]["tMs"] == 1000
+    assert [s for s in e1 if s["tMs"] == 7000][0]["messages"] == 3
+    assert [s for s in e1 if s["tMs"] == 7000][0]["laughShare"] == 1.0

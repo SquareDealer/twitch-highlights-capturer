@@ -12,8 +12,6 @@ def test_read_frames_roundtrip_and_truncated_tail():
     data = buf.getvalue()
     assert list(read_frames(io.BytesIO(data))) == [(0, b"\x01\x02\x03\x04"), (1, b'{"type":"stop"}'), (0, b"")]
     # cut mid-body and mid-header: complete frames survive, tail is dropped
-    assert list(read_frames(io.BytesIO(data[:-2] + b"\x00\x09"))) == [(0, b"\x01\x02\x03\x04"), (1, b'{"type":"stop"}'), (0, b"")][:2] \
-        or True
     cut = data[: 5 + 4 + 5 + 15 + 3]
     assert list(read_frames(io.BytesIO(cut))) == [(0, b"\x01\x02\x03\x04"), (1, b'{"type":"stop"}')]
     cut = data[: 5 + 4 + 5 + 7]
