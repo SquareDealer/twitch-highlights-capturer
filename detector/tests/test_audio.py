@@ -54,6 +54,7 @@ def test_voice_spike_plus_10db():
     assert sp[0].strong is False
     assert sp[0].start_ms == 30000 and sp[0].end_ms == 30500
     assert abs(sp[0].peak_db + 18) < 0.5
+    assert abs(sp[0].delta_db - 12) < 1.0
     assert a.spikes() == []
 
 

@@ -36,7 +36,7 @@ def laugh_run(a, b, **kw):
 
 
 def test_laugh_trigger_creates_event_with_audio_anchor():
-    sp = VoiceSpike(100_000, 101_000, 12.0, False)
+    sp = VoiceSpike(100_000, 101_000, 12.0, False, 12.0)
     out, _, _ = run(laugh_run(106, 114), [sp])
     assert len(out) == 1
     sec, e = out[0]
@@ -69,19 +69,19 @@ def test_mass_with_unknown_repeat_needs_voice():
     frames = {t: fr(t, spike=7, msgs=16, authors=11, react=0.5, rep="unknown") for t in range(106, 112)}
     out, near, _ = run(frames)
     assert out == [] and any("voice" in n.missing for n in near)
-    out, _, _ = run(frames, [VoiceSpike(100_000, 101_000, 12.0, False)])
+    out, _, _ = run(frames, [VoiceSpike(100_000, 101_000, 12.0, False, 12.0)])
     assert len(out) == 1 and out[0][1].triggers == ["mass"]
 
 
 def test_interactive_repeat_suppresses_both_triggers():
     frames = {t: fr(t, spike=7, msgs=16, authors=11, react=0.5, laugh=0.5, rep="interactive") for t in range(106, 112)}
-    out, near, _ = run(frames, [VoiceSpike(100_000, 101_000, 12.0, False)])
+    out, near, _ = run(frames, [VoiceSpike(100_000, 101_000, 12.0, False, 12.0)])
     assert out == []
     assert any(n.kind == "chat" and "interactive" in n.missing for n in near)
 
 
 def test_strong_voice_spike_alone_is_low_confidence_audio_event():
-    out, _, _ = run({}, [VoiceSpike(100_000, 101_000, 20.0, True)])
+    out, _, _ = run({}, [VoiceSpike(100_000, 101_000, -10.0, True, 20.0)])
     e = out[0][1]
     assert e.triggers == ["audio"] and e.confidence == "low"
     assert (e.estimated_event_ms, e.start_ms, e.end_ms, e.uncertainty_ms) == (100_000, 100_000, 101_000, 1000)
@@ -89,19 +89,19 @@ def test_strong_voice_spike_alone_is_low_confidence_audio_event():
 
 
 def test_weak_voice_spike_is_audio_nearmiss():
-    out, near, _ = run({}, [VoiceSpike(100_000, 101_000, 12.0, False)])
+    out, near, _ = run({}, [VoiceSpike(100_000, 101_000, 12.0, False, 12.0)])
     assert out == [] and [n.kind for n in near] == ["audio"]
 
 
 def test_events_within_10s_merge_and_collect_triggers():
-    out, _, _ = run(laugh_run(106, 114), [VoiceSpike(116_000, 117_000, 12.0, True)])
+    out, _, _ = run(laugh_run(106, 114), [VoiceSpike(116_000, 117_000, 12.0, True, 12.0)])
     assert len(out) == 1
     e = out[0][1]
     assert e.triggers == ["laugh", "audio"] and e.end_ms == 117_000 and e.confidence == "low"
 
 
 def test_nothing_fires_during_warmup():
-    out, _, _ = run(laugh_run(10, 20), [VoiceSpike(30_000, 31_000, 20.0, True)], until=100)
+    out, _, _ = run(laugh_run(10, 20), [VoiceSpike(30_000, 31_000, 20.0, True, 20.0)], until=100)
     assert out == []
 
 
@@ -113,7 +113,7 @@ def test_event_longer_than_max_is_closed():
 
 def test_score_formula():
     frames = {t: laugh_frame(t, laugh=0.6, rar=0.8, arar=0.5) for t in range(106, 110)}
-    out, _, _ = run(frames, [VoiceSpike(100_000, 101_000, 10.0, False)])
+    out, _, _ = run(frames, [VoiceSpike(100_000, 101_000, 10.0, False, 10.0)])
     sc = out[0][1].scores
     assert sc == {"S": 0.63, "C": 0.8, "E": 0.6, "U": 0.5, "A": 0.5}
 
@@ -126,3 +126,11 @@ def test_flush_returns_open_event_and_callback():
     evs = asm.flush()
     assert len(evs) == 1 and evs[0].to_json()["type"] == "event"
     assert asm.flush() == []
+
+
+def test_realistic_audio_event_has_positive_a():
+    # absolute peak is negative dBFS; A must come from delta_db above baseline
+    sp = VoiceSpike(100_000, 101_000, -18.0, False, 12.0)
+    out, _, _ = run(laugh_run(106, 110), [sp])
+    e = out[0][1]
+    assert e.scores["A"] == 0.6 and e.signals["deltaDb"] == 12.0

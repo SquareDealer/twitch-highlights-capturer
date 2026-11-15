@@ -20,6 +20,7 @@ class VoiceSpike:
     end_ms: int
     peak_db: float
     strong: bool
+    delta_db: float  # max dB above the voiced baseline over the spike's blocks
 
 
 @dataclass
@@ -94,9 +95,10 @@ class AudioAnalyzer:
         if hot:
             cur = self._cur
             if cur is None:
-                cur = self._cur = {"start": t, "n": 0, "peak": db, "run": 0, "best": 0}
+                cur = self._cur = {"start": t, "n": 0, "peak": db, "run": 0, "best": 0, "delta": delta}
             cur["n"] += 1
             cur["peak"] = max(cur["peak"], db)
+            cur["delta"] = max(cur["delta"], delta)
             if delta >= c["triggerDb"] and p >= c["triggerVad"]:
                 cur["run"] += 1
                 cur["best"] = max(cur["best"], cur["run"])
@@ -115,7 +117,7 @@ class AudioAnalyzer:
             return
         sp = VoiceSpike(
             start_ms=cur["start"], end_ms=cur["start"] + cur["n"] * self.block_ms, peak_db=cur["peak"],
-            strong=cur["best"] * self.block_ms >= self.c["triggerMinMs"],
+            strong=cur["best"] * self.block_ms >= self.c["triggerMinMs"], delta_db=cur["delta"],
         )
         self._new_spikes.append(sp)
         self._recent.append(sp)

@@ -66,9 +66,7 @@ class _Open:
 
 
 def _delta(sp: VoiceSpike) -> float:
-    # VoiceSpike has no baseline-relative field today: use delta_db if the spike
-    # ever carries one, else peak_db (see report).
-    return float(getattr(sp, "delta_db", sp.peak_db))
+    return float(sp.delta_db)
 
 
 class EventAssembler:
