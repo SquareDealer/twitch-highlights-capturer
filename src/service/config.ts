@@ -70,7 +70,7 @@ export function defaultConfig(dataDir: string): ServiceConfig {
         laughSpike: 3, laughShare: 0.3, massSpike: 6, massMinMessages: 15, massMinAuthors: 10,
         massReactionShare: 0.2, repeatShare: 0.6, endSpike: 1.5,
         laughWords: [
-          '^(а*х+а+х*)+[ах]*$', '^(a*h+a+h*)+[ah]*$', '^ору+$', '^ржу+$', '^ло+л$', '^ке+к$', '^пхп+$', '^хд+$',
+          '^[ах]*ха[ах]*$', '^[ah]*ha[ah]*$', '^ору+$', '^ржу+$', '^ло+л$', '^ке+к$', '^пхп+$', '^хд+$',
           '^lo+l$', '^lmao+$', '^xd+$', '^kekw$', '^lul$', '^omegalul$', '^icant$', '😂', '🤣',
         ],
         reactionWords: [
@@ -134,5 +134,7 @@ export function loadConfig(file: string, dataDir: string): ServiceConfig {
 export function saveConfigPatch(file: string, patch: Partial<Pick<ServiceConfig, 'multiStream'>>): void {
   const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
   const base = isObj(raw) ? raw : {};
-  fs.writeFileSync(file, JSON.stringify({ ...base, ...patch }, null, 2) + '\n', 'utf8');
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ ...base, ...patch }, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, file);
 }
