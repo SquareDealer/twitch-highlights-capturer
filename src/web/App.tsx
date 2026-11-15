@@ -1,22 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FeedClip } from '../service/types';
 import type { StreamStatus } from '../service/streams';
-import { api, ApiError, subscribe, type CuttingState, type Notice } from './api';
+import { api, ApiError, setUnauthorizedHandler, subscribe, type CuttingState, type Notice, type PublicClip } from './api';
 import { Feed } from './views/Feed';
 import { Login } from './views/Login';
 import { Streams } from './views/Streams';
 
-type Clip = Omit<FeedClip, 'mp4Path' | 'jsonPath'>;
 type Screen = 'checking' | 'login' | 'streams' | 'feed';
 
-const upsert = (list: Clip[], c: Clip): Clip[] => (list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? c : x)) : [c, ...list]);
+const upsert = (list: PublicClip[], c: PublicClip): PublicClip[] => (list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? c : x)) : [c, ...list]);
 
 export function App() {
   const [screen, setScreen] = useState<Screen>('checking');
   const [streams, setStreams] = useState<StreamStatus[]>([]);
   const [multi, setMulti] = useState(false);
   const [cutting, setCutting] = useState<CuttingState>({ paused: false, reason: null });
-  const [clips, setClips] = useState<Clip[]>([]);
+  const [clips, setClips] = useState<PublicClip[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const authed = screen === 'streams' || screen === 'feed';
 
@@ -37,15 +35,28 @@ export function App() {
   useEffect(() => void load(), [load]);
 
   useEffect(() => {
+    setUnauthorizedHandler(() => setScreen('login'));
+    return () => setUnauthorizedHandler(undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!authed) return;
+    const onVisible = () => document.visibilityState === 'visible' && void load();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [authed, load]);
+
+  useEffect(() => {
     if (!authed) return;
     return subscribe({
       streams: setStreams,
       clip: (c) => setClips((l) => upsert(l, c)),
+      open: () => void load(),
       notice: setNotice,
       cutting: setCutting,
       unauthorized: () => setScreen('login'),
     });
-  }, [authed]);
+  }, [authed, load]);
 
   if (screen === 'checking') return null;
   if (screen === 'login') return <Login onLogin={() => void load()} />;

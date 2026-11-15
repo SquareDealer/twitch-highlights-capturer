@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
-import type { ClipStatus, FeedClip } from '../../service/types';
+import type { ClipStatus } from '../../service/types';
+import type { PublicClip } from '../api';
 import { ClipCard } from '../components/ClipCard';
 
-type Clip = Omit<FeedClip, 'mp4Path' | 'jsonPath'>;
-
-export function Feed({ clips, onChange }: { clips: Clip[]; onChange: (c: FeedClip) => void }) {
+export function Feed({ clips, onChange }: { clips: PublicClip[]; onChange: (c: PublicClip) => void }) {
   const [channel, setChannel] = useState('');
   const [status, setStatus] = useState<'' | ClipStatus>('');
   const [sort, setSort] = useState<'time' | 'score'>('time');

@@ -7,7 +7,7 @@ export const triggerLabel = (t: Trigger): string => LABELS[t];
 /** Russian decimal comma, trailing zeros dropped: 5.2 → '5,2', 5 → '5'. */
 export const num = (x: number, digits = 1): string => String(Number(x.toFixed(digits))).replace('.', ',');
 
-export function clipSummary(c: FeedClip): string {
+export function clipSummary(c: Pick<FeedClip, 'signals'>): string {
   const s = c.signals;
   const parts: string[] = [];
   if (s.chatSpike > 0) parts.push(`чат ×${num(s.chatSpike)}`);

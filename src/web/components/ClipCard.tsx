@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FeedClip } from '../../service/types';
-import { api } from '../api';
+import { api, type PublicClip } from '../api';
 import { clipSummary, clockTime, duration, num, triggerLabel } from '../format';
 
 type Decision = 'taken' | 'rejected';
@@ -12,7 +12,7 @@ const STATUS_LABEL: Record<FeedClip['status'], string> = {
   error: 'ошибка',
 };
 
-export function ClipCard({ clip, onChange }: { clip: FeedClip | Omit<FeedClip, 'mp4Path' | 'jsonPath'>; onChange: (c: FeedClip) => void }) {
+export function ClipCard({ clip, onChange }: { clip: PublicClip; onChange: (c: PublicClip) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const playable = clip.status !== 'pending' && clip.status !== 'error' && !clip.fileDeleted;
@@ -50,7 +50,7 @@ export function ClipCard({ clip, onChange }: { clip: FeedClip | Omit<FeedClip, '
           </span>
           {clip.confidence === 'low' && <span className="badge warn">низкая уверенность</span>}
         </div>
-        <div className="muted">{clipSummary(clip as FeedClip)}</div>
+        <div className="muted">{clipSummary(clip)}</div>
         <div className="clip-actions">
           {decidable && (
             <>

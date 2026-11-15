@@ -1,6 +1,14 @@
 import type { FeedClip, ClipStatus } from '../service/types';
 import type { StreamStatus } from '../service/streams';
 
+export type PublicClip = Omit<FeedClip, 'mp4Path' | 'jsonPath'>;
+
+let onUnauthorized: (() => void) | undefined;
+/** Called when any regular API call (except the login attempt itself) answers 401. */
+export function setUnauthorizedHandler(fn: (() => void) | undefined): void {
+  onUnauthorized = fn;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -47,6 +55,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     /* non-JSON body */
   }
   if (!res.ok) {
+    if (res.status === 401 && path !== '/api/login') onUnauthorized?.();
     const message = (data as { error?: string } | null)?.error;
     throw new ApiError(res.status, message ?? `Ошибка сервера (${res.status})`);
   }
@@ -60,21 +69,23 @@ export const api = {
   probe: (url: string) => request<{ channel: string; qualities: string[] }>('POST', '/api/probe', { url }),
   startStream: (url: string, quality: string) => request<StreamStatus>('POST', '/api/streams', { url, quality }),
   stopStream: (id: string) => request<void>('DELETE', `/api/streams/${encodeURIComponent(id)}`),
-  manualClip: (id: string) => request<Omit<FeedClip, 'mp4Path' | 'jsonPath'>>('POST', `/api/streams/${encodeURIComponent(id)}/manual-clip`),
+  manualClip: (id: string) => request<PublicClip>('POST', `/api/streams/${encodeURIComponent(id)}/manual-clip`),
   setMode: (multiStream: boolean) => request<ModeState>('PUT', '/api/mode', { multiStream }),
   clips: (query: { streamer?: string; status?: ClipStatus; limit?: number } = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(query)) if (v !== undefined) q.set(k, String(v));
     const qs = q.toString();
-    return request<FeedClip[]>('GET', `/api/clips${qs ? `?${qs}` : ''}`);
+    return request<PublicClip[]>('GET', `/api/clips${qs ? `?${qs}` : ''}`);
   },
   setClipStatus: (id: string, status: 'new' | 'taken' | 'rejected') =>
-    request<FeedClip>('POST', `/api/clips/${encodeURIComponent(id)}/status`, { status }),
+    request<PublicClip>('POST', `/api/clips/${encodeURIComponent(id)}/status`, { status }),
 };
 
 export interface SubscribeHandlers {
   streams?: (s: StreamStatus[]) => void;
-  clip?: (c: FeedClip) => void;
+  clip?: (c: PublicClip) => void;
+  /** Fired on every reconnect (not the first connect): state may have been missed. */
+  open?: () => void;
   notice?: (n: Notice) => void;
   cutting?: (c: CuttingState) => void;
   unauthorized?: () => void;
@@ -85,6 +96,7 @@ export function subscribe(h: SubscribeHandlers): () => void {
   let es: EventSource | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
+  let opened = false;
 
   const on = <T,>(name: string, fn?: (v: T) => void) =>
     es!.addEventListener(name, (e) => {
@@ -102,6 +114,10 @@ export function subscribe(h: SubscribeHandlers): () => void {
     on('clip', h.clip);
     on('notice', h.notice);
     on('cutting', h.cutting);
+    es.onopen = () => {
+      if (opened) h.open?.();
+      opened = true;
+    };
     es.onerror = () => {
       if (es!.readyState !== EventSource.CLOSED) return; // browser reconnects by itself
       es!.close();
