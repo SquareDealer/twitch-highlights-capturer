@@ -234,7 +234,7 @@ export class Cutter extends EventEmitter {
   }
 }
 
-async function defaultFreeBytes(dir: string): Promise<number> {
+export async function defaultFreeBytes(dir: string): Promise<number> {
   await mkdir(dir, { recursive: true });
   const s = await statfs(dir);
   return Number(s.bavail) * Number(s.bsize);

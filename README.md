@@ -68,6 +68,23 @@ npm run dist
 
 Приложение запрашивает доступ `drive.file`: оно видит только файлы, которые создало само. Токены хранятся в зашифрованном виде (Windows DPAPI).
 
+## Сервис
+
+Отдельный сервис без окна: записывает эфиры, сам находит моменты (всплески чата и громкий голос) и нарезает клипы без перекодирования. Управление — через веб-интерфейс в браузере.
+
+1. **Детектор (Python 3.10+).** В папке `detector`:
+   ```
+   python -m venv .venv
+   .venv/Scripts/pip install -e .
+   ```
+   Скачайте модель `silero_vad.onnx` из репозитория snakers4/silero-vad (`src/silero_vad/data/silero_vad.onnx`) в `detector/models/silero_vad.onnx`. Подробности — `detector/README.md`.
+2. **Веб-интерфейс:** `npm run service:build` (собирает `out/web`).
+3. **Запуск:** `npm run service`. При первом запуске создаётся `config.json` со случайным паролем — он печатается в консоль один раз. Пути можно задать переменными `HL_CONFIG` (по умолчанию `./config.json`) и `HL_DATA` (по умолчанию `./data`: база, клипы, буфер).
+4. **`config.json`:** все пороги детектора и нарезки, порт (`port`, по умолчанию 8080), пути к `streamlink`, `ffmpeg` и Python. Если пакет детектора установлен в venv, укажите полный путь к его Python в `pythonPath`, например `"D:/proj/twitch-highlights-capturer/detector/.venv/Scripts/python.exe"` (Windows) или `.../detector/.venv/bin/python` (Linux); иначе установите пакет в тот `python`, что в `PATH`. Образец всех полей — `config.example.json`.
+5. **Адрес:** `http://<ip-компьютера>:8080` из локальной сети, вход по паролю. Удалённый доступ — через туннель, например `cloudflared tunnel --url http://localhost:8080`.
+
+Остановка — Ctrl+C: незаконченные клипы дорезаются, затем сервис закрывается.
+
 ## Известные ограничения
 
 - Чат Twitch не встроен: в окне только видео.

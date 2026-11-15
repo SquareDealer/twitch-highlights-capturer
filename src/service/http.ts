@@ -46,7 +46,7 @@ function decodeParam(v: string): string {
   }
 }
 
-const publicClip = ({ mp4Path: _m, jsonPath: _j, ...rest }: FeedClip) => rest;
+export const publicClip = ({ mp4Path: _m, jsonPath: _j, ...rest }: FeedClip) => rest;
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const data = Buffer.from(JSON.stringify(body));

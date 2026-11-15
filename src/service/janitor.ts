@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { mkdir, statfs, unlink as fsUnlink } from 'node:fs/promises';
+import { unlink as fsUnlink } from 'node:fs/promises';
 import type { createClipRepo } from './clipRepo';
 import type { ServiceConfig } from './config';
+import { defaultFreeBytes } from './cutter';
 import type { FeedClip } from './types';
 
 const PAUSE_REASON = 'Мало места на диске: нарезка новых клипов приостановлена, запись эфиров продолжается';
@@ -12,12 +13,6 @@ export interface JanitorDeps {
   freeBytes?: () => Promise<number>;
   unlink?: (p: string) => Promise<void>;
   now?: () => Date;
-}
-
-async function defaultFreeBytes(dir: string): Promise<number> {
-  await mkdir(dir, { recursive: true });
-  const s = await statfs(dir);
-  return Number(s.bavail) * Number(s.bsize);
 }
 
 /** Deletes MP4 files of rejected clips (TTL, or all of them when space is low) and pauses cutting if that is not enough. */
