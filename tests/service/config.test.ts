@@ -1,0 +1,63 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { defaultConfig, loadConfig, saveConfigPatch } from '../../src/service/config';
+
+let dir: string;
+let file: string;
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cfg-'));
+  file = path.join(dir, 'config.json');
+});
+afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+const write = (o: unknown) => fs.writeFileSync(file, JSON.stringify(o));
+
+describe('service config', () => {
+  it('defaults match the spec', () => {
+    const c = defaultConfig('D:/d');
+    expect(c.detector.chat.massSpike).toBe(6);
+    expect(c.port).toBe(8080);
+    expect(c.libraryDir).toBe(path.join('D:/d', 'library'));
+    expect(c.bufferDir).toBe(path.join('D:/d', 'buffer'));
+    expect(c.diskReserveBytes).toBe(10 * 1024 ** 3);
+    expect(c.detector.weights).toEqual({ C: 0.35, E: 0.25, U: 0.2, A: 0.2 });
+    expect(c.detector.chat.laughWords).toContain('^lo+l$');
+    expect(c.detector.chat.laughWords).toHaveLength(17);
+    expect(c.detector.chat.reactionWords).toHaveLength(10);
+    expect(c.detector.chat.interactiveWords).toHaveLength(7);
+    expect(() => c.detector.chat.laughWords.forEach((w) => new RegExp(w, 'i'))).not.toThrow();
+  });
+
+  it('merges file over defaults', () => {
+    write({ password: 'x', preRollMs: 20000, detector: { chat: { massSpike: 7 } } });
+    const c = loadConfig(file, 'D:/d');
+    expect(c.preRollMs).toBe(20000);
+    expect(c.postRollMs).toBe(10000);
+    expect(c.detector.chat.massSpike).toBe(7);
+    expect(c.detector.chat.laughSpike).toBe(3);
+    expect(c.detector.audio.triggerDb).toBe(15);
+  });
+
+  it('derives library/buffer from overridden dataDir', () => {
+    write({ password: 'x', dataDir: 'E:/z' });
+    const c = loadConfig(file, 'D:/d');
+    expect(c.libraryDir).toBe(path.join('E:/z', 'library'));
+  });
+
+  it('rejects empty password and wrong types with field name', () => {
+    write({ password: '' });
+    expect(() => loadConfig(file, 'D:/d')).toThrow(/password/);
+    write({ password: 'x', port: '80' });
+    expect(() => loadConfig(file, 'D:/d')).toThrow(/port/);
+    write({ password: 'x', detector: { chat: { alpha: 'a' } } });
+    expect(() => loadConfig(file, 'D:/d')).toThrow(/detector\.chat\.alpha/);
+    write({ password: 'x', detector: { chat: { laughWords: [1] } } });
+    expect(() => loadConfig(file, 'D:/d')).toThrow(/laughWords/);
+  });
+
+  it('saveConfigPatch changes only multiStream', () => {
+    write({ password: 'x', port: 9000, extra: { a: 1 } });
+    saveConfigPatch(file, { multiStream: true });
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ password: 'x', port: 9000, extra: { a: 1 }, multiStream: true });
+  });
+});
