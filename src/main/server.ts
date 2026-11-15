@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { extname, join, resolve, sep } from 'node:path';
 
-const MIME: Record<string, string> = {
+export const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -51,13 +51,13 @@ async function fileSize(path: string): Promise<number | null> {
   }
 }
 
-function end(res: ServerResponse, status: number, headers: Record<string, string> = {}): void {
+export function end(res: ServerResponse, status: number, headers: Record<string, string> = {}): void {
   res.writeHead(status, { 'Content-Length': '0', ...headers });
   res.end();
 }
 
 /** Parses a single-range `Range` header. Returns null when absent/unsupported, 'invalid' when unsatisfiable. */
-function parseRange(header: string | undefined, size: number): { start: number; end: number } | 'invalid' | null {
+export function parseRange(header: string | undefined, size: number): { start: number; end: number } | 'invalid' | null {
   if (!header) return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (!m || (m[1] === '' && m[2] === '')) return null;
@@ -75,11 +75,19 @@ function parseRange(header: string | undefined, size: number): { start: number; 
   return start >= size || start > last ? 'invalid' : { start, end: last };
 }
 
-async function sendFile(req: IncomingMessage, res: ServerResponse, path: string, type: string, ranged: boolean): Promise<void> {
+export async function sendFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  type: string,
+  ranged: boolean,
+  opts: { csp?: string; headers?: Record<string, string> } = {},
+): Promise<void> {
   const size = await fileSize(path);
   if (size === null) return end(res, 404);
   const base: Record<string, string> = { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
-  if (type.startsWith('text/html')) base['Content-Security-Policy'] = APP_CSP;
+  if (type.startsWith('text/html')) base['Content-Security-Policy'] = opts.csp ?? APP_CSP;
+  Object.assign(base, opts.headers);
   if (ranged) base['Accept-Ranges'] = 'bytes';
   const range = ranged ? parseRange(req.headers.range, size) : null;
   if (range === 'invalid') return end(res, 416, { 'Content-Range': `bytes */${size}` });
