@@ -84,7 +84,7 @@ export const api = {
 export interface SubscribeHandlers {
   streams?: (s: StreamStatus[]) => void;
   clip?: (c: PublicClip) => void;
-  /** Fired on every reconnect (not the first connect): state may have been missed. */
+  /** Fired on every (re)connect, the first one included: state may have been missed. */
   open?: () => void;
   notice?: (n: Notice) => void;
   cutting?: (c: CuttingState) => void;
@@ -96,7 +96,6 @@ export function subscribe(h: SubscribeHandlers): () => void {
   let es: EventSource | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
-  let opened = false;
 
   const on = <T,>(name: string, fn?: (v: T) => void) =>
     es!.addEventListener(name, (e) => {
@@ -114,10 +113,9 @@ export function subscribe(h: SubscribeHandlers): () => void {
     on('clip', h.clip);
     on('notice', h.notice);
     on('cutting', h.cutting);
-    es.onopen = () => {
-      if (opened) h.open?.();
-      opened = true;
-    };
+    // Every open, the first one included: anything that changed between the initial load and the
+    // subscription (or during a reconnect) is not replayed by the server, so the caller refetches.
+    es.onopen = () => h.open?.();
     es.onerror = () => {
       if (es!.readyState !== EventSource.CLOSED) return; // browser reconnects by itself
       es!.close();

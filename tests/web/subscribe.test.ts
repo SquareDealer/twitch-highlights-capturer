@@ -19,14 +19,14 @@ afterEach(() => {
   setUnauthorizedHandler(undefined);
 });
 
-it('calls open only on reconnects, not on the first connect', () => {
+it('calls open on the first connect too: changes between the initial load and the subscription are refetched', () => {
   vi.stubGlobal('EventSource', FakeES);
   const open = vi.fn();
   const stop = subscribe({ open });
   FakeES.last.onopen!();
-  expect(open).not.toHaveBeenCalled();
-  FakeES.last.onopen!();
   expect(open).toHaveBeenCalledTimes(1);
+  FakeES.last.onopen!();
+  expect(open).toHaveBeenCalledTimes(2);
   stop();
 });
 
