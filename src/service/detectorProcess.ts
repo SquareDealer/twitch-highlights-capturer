@@ -70,6 +70,7 @@ export class DetectorProcess extends EventEmitter {
   private epoch: number | null = null;
   private pcm: Readable | null = null;
   private pcmListener: ((chunk: Buffer) => void) | null = null;
+  private readonly pcmErrorListener = () => undefined;
   private stderrTail: string[] = [];
 
   constructor(private readonly opts: DetectorProcessOptions) {
@@ -103,7 +104,7 @@ export class DetectorProcess extends EventEmitter {
     this.pcm = pcm;
     this.pcmListener = listener;
     pcm.on('data', listener); // attaching a data listener keeps the stream flowing
-    pcm.on('error', () => undefined);
+    pcm.on('error', this.pcmErrorListener);
   }
 
   stop(): Promise<void> {
@@ -136,7 +137,12 @@ export class DetectorProcess extends EventEmitter {
   }
 
   private detachPcm(): void {
-    if (this.pcm && this.pcmListener) this.pcm.off('data', this.pcmListener);
+    if (this.pcm && this.pcmListener) {
+      this.pcm.off('data', this.pcmListener);
+      this.pcm.off('error', this.pcmErrorListener);
+      this.pcm.on('error', this.pcmErrorListener); // keep one no-op so a late error can't crash
+      this.pcm.resume(); // keep draining the old stream (ffmpeg stdout must never stall)
+    }
     this.pcm = null;
     this.pcmListener = null;
   }

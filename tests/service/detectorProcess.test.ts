@@ -117,6 +117,28 @@ describe('DetectorProcess', () => {
     expect(pcm.readableLength).toBeLessThan(4096);
   });
 
+  it('keeps draining the pcm stream after stop() and after re-attach', async () => {
+    const { dp } = make();
+    dp.start();
+    const first = new PassThrough({ highWaterMark: 1024 });
+    dp.attachPcm(first, 1);
+    await until(() => dp.health().running);
+    const second = new PassThrough({ highWaterMark: 1024 });
+    dp.attachPcm(second, 2);
+    for (let i = 0; i < 50; i++) {
+      first.write(Buffer.alloc(1024));
+      await new Promise((r) => setImmediate(r));
+    }
+    expect(first.readableLength).toBeLessThan(4096);
+    expect(first.listenerCount('error')).toBe(1);
+    await dp.stop();
+    for (let i = 0; i < 50; i++) {
+      second.write(Buffer.alloc(1024));
+      await new Promise((r) => setImmediate(r));
+    }
+    expect(second.readableLength).toBeLessThan(4096);
+  });
+
   it('restarts when heartbeats stop', async () => {
     const { dp } = make(['--no-heartbeat'], { heartbeatTimeoutMs: 200 });
     dp.start();
