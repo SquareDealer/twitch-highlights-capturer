@@ -166,7 +166,7 @@ it('runs up to maxStreams in multi mode, each with its own buffer directory', as
   expect(registry.mode()).toEqual({ multiStream: true, limit: 2 });
   expect(await registry.start('twitch.tv/carol', 'best')).toEqual({
     ok: false,
-    error: 'Достигнут лимит одновременных эфиров (2). Остановите один из эфиров или включите режим «несколько эфиров»',
+    error: 'Достигнут лимит одновременных эфиров (2). Остановите один из эфиров',
   });
   expect(spawnOf('alice').epochDir).toBe(join(cfg.bufferDir, a.id, 'e0'));
   expect(spawnOf('bob').epochDir).toBe(join(cfg.bufferDir, b.id, 'e0'));

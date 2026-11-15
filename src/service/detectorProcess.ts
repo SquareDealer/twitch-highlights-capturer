@@ -34,6 +34,7 @@ const FRAME_PCM = 0;
 const FRAME_JSON = 1;
 const MAX_PCM_FRAME = 64 * 1024;
 const STDERR_LINES = 20;
+const PCM_BYTES_PER_MS = 32; // s16le mono 16 kHz
 
 function frame(kind: number, body: Buffer): Buffer {
   const head = Buffer.alloc(5);
@@ -50,6 +51,11 @@ function jsonFrame(obj: object): Buffer {
  * Supervises the Python detector. The PCM stream attached via attachPcm is
  * ffmpeg's stdout: it is ALWAYS consumed, and chunks are dropped whenever the
  * detector is down or its stdin is backpressured, so recording never stalls.
+ *
+ * The detector's clock must stay on the epoch's stream time: every byte of the
+ * epoch's PCM is counted (forwarded or dropped), a (re-)announced epoch frame
+ * carries the stream time the detector starts at, and after a drop a resync
+ * frame moves the detector's clock over the gap before the next forwarded chunk.
  */
 export class DetectorProcess extends EventEmitter {
   private readonly heartbeatTimeoutMs: number;
@@ -68,6 +74,9 @@ export class DetectorProcess extends EventEmitter {
   private restartTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private epoch: number | null = null;
+  private epochBytes = 0; // PCM bytes of the current epoch received from the pcm stream
+  private gap = false; // PCM was dropped since the detector's clock was last set
+  private realign = false; // the next forwarded byte must start an s16 sample
   private pcm: Readable | null = null;
   private pcmListener: ((chunk: Buffer) => void) | null = null;
   private readonly pcmErrorListener = () => undefined;
@@ -99,6 +108,9 @@ export class DetectorProcess extends EventEmitter {
   attachPcm(pcm: Readable, epoch: number): void {
     this.detachPcm();
     this.epoch = epoch;
+    this.epochBytes = 0;
+    this.gap = false;
+    this.realign = false;
     this.announceEpoch();
     const listener = (chunk: Buffer) => this.onPcm(chunk);
     this.pcm = pcm;
@@ -251,7 +263,21 @@ export class DetectorProcess extends EventEmitter {
   }
 
   private onPcm(chunk: Buffer): void {
-    if (!this.running || this.blocked || !this.child?.stdin?.writable) return; // discard
+    const start = this.epochBytes;
+    this.epochBytes += chunk.length;
+    if (!this.running || this.blocked || !this.child?.stdin?.writable) {
+      this.gap = true; // discard
+      return;
+    }
+    if (this.gap) {
+      this.gap = false;
+      this.realign = true;
+      this.writeRaw(jsonFrame({ type: 'resync', tMs: Math.floor(start / PCM_BYTES_PER_MS) }));
+    }
+    if (this.realign) {
+      this.realign = false;
+      if (start % 2 === 1) chunk = chunk.subarray(1);
+    }
     for (let off = 0; off < chunk.length; off += MAX_PCM_FRAME) {
       const ok = this.writeRaw(frame(FRAME_PCM, chunk.subarray(off, off + MAX_PCM_FRAME)));
       if (!ok) this.blocked = true; // later chunks are dropped until 'drain'
@@ -259,7 +285,10 @@ export class DetectorProcess extends EventEmitter {
   }
 
   private announceEpoch(): void {
-    if (this.epoch !== null && this.running) this.writeRaw(jsonFrame({ type: 'epoch', epoch: this.epoch }));
+    if (this.epoch === null || !this.running) return;
+    this.writeRaw(jsonFrame({ type: 'epoch', epoch: this.epoch, startMs: Math.floor(this.epochBytes / PCM_BYTES_PER_MS) }));
+    this.gap = false;
+    this.realign = true;
   }
 
   private writeRaw(buf: Buffer): boolean {

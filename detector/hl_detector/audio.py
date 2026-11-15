@@ -55,9 +55,25 @@ class AudioAnalyzer:
         self._cur: Optional[dict] = None
         self._vad_fails = 0
 
-    def reset(self) -> None:
+    def reset(self, start_ms: int = 0) -> None:
+        """New timeline whose first block starts at start_ms (the epoch's stream time)."""
         self._reset_state()
+        self._samples = int(start_ms) * SAMPLE_RATE // 1000
         self.vad.reset()
+
+    def now_ms(self) -> int:
+        """Stream time of the next block's start."""
+        return self._samples * 1000 // SAMPLE_RATE
+
+    def skip_to(self, t_ms: int) -> None:
+        """Audio up to t_ms was lost: drop the partial block, close an open spike at the gap and
+        continue the timeline at t_ms. Baselines are kept (old entries age out by time)."""
+        t_ms = int(t_ms)
+        if t_ms <= self.now_ms():
+            return
+        self._buf = b""
+        self._close(self.now_ms())
+        self._samples = t_ms * SAMPLE_RATE // 1000
 
     def feed(self, pcm: bytes) -> None:
         self._buf += pcm

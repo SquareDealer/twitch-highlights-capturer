@@ -49,6 +49,13 @@ def _chat_thread(chat: ChatSource, q: queue.Queue) -> None:
         log.exception("Сбой потока чата")
 
 
+def _int(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, vad=None, clock=None) -> int:
     ap = argparse.ArgumentParser(prog="hl_detector")
     ap.add_argument("--channel", default="")
@@ -84,7 +91,8 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
     analyzer = {"chat": ChatAnalyzer(cfg)}
     audio = AudioAnalyzer(cfg["audio"], vad)
     asm = EventAssembler(cfg, on_chat_spike=lambda t: analyzer["chat"].mark_spike(t))
-    st = {"fed": 0, "offset": None, "last": None, "t": 0}  # fed bytes in epoch, wall-audio offset, last AudioFrame
+    # fed: stream position in bytes since the epoch's t=0 (starts at the epoch frame's startMs); start: startMs
+    st = {"fed": 0, "offset": None, "last": None, "start": 0}
     warm_ms = int(cfg["events"]["warmupS"]) * 1000
     pending = bytearray()
 
@@ -100,11 +108,12 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
         emit({
             "type": "signals", "tMs": t, "chatSpike": round(frame.spike, 3), "laughShare": round(frame.laugh_share, 3),
             "messages": frame.messages, "deltaDb": round(fr.delta_db, 3) if fr else 0.0,
-            "vad": round(fr.vad, 3) if fr else 0.0, "warm": t >= warm_ms,
+            "vad": round(fr.vad, 3) if fr else 0.0, "warm": t - st["start"] >= warm_ms,
         }, stdout)
         send_events(evs)
         for n in near:
-            emit({"type": "nearmiss", "tMs": n.t_ms, "kind": n.kind, "missing": n.missing, "values": n.values}, stdout)
+            emit({"type": "nearmiss", "epoch": asm.epoch, "tMs": n.t_ms, "kind": n.kind, "missing": n.missing,
+                  "values": n.values}, stdout)
 
     def feed(body: bytes) -> None:
         pending.extend(body)
@@ -128,13 +137,21 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
             if frames:
                 st["last"] = frames[-1]
 
-    def reset_epoch(epoch: int) -> None:
+    def reset_epoch(epoch: int, start_ms: int) -> None:
         send_events(asm.flush())
-        audio.reset()
-        asm.set_epoch(epoch)
+        audio.reset(start_ms)
+        asm.set_epoch(epoch, start_ms)
         analyzer["chat"] = ChatAnalyzer(cfg)
         pending.clear()
-        st.update(fed=0, offset=None, last=None)
+        st.update(fed=start_ms * BYTES_PER_MS, offset=None, last=None, start=start_ms)
+
+    def resync(t_ms: int) -> None:
+        """PCM up to t_ms was dropped upstream: jump the clock over the gap (never backwards)."""
+        if t_ms * BYTES_PER_MS <= st["fed"]:
+            return
+        pending.clear()
+        audio.skip_to(t_ms)
+        st["fed"] = t_ms * BYTES_PER_MS
 
     def set_status(s: str) -> None:
         if s != chat_status["v"]:
@@ -156,7 +173,9 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
                 return True
             t = msg.get("type") if isinstance(msg, dict) else None
             if t == "epoch":
-                reset_epoch(int(msg.get("epoch", 0)))
+                reset_epoch(_int(msg.get("epoch")), max(0, _int(msg.get("startMs"))))
+            elif t == "resync":
+                resync(_int(msg.get("tMs")))
             elif t == "stop":
                 return False
         elif kind == "chat":

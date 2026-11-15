@@ -76,14 +76,17 @@ class EventAssembler:
         self.w = cfg["weights"]
         self.on_chat_spike = on_chat_spike
         self.epoch = 0
+        self.start_ms = 0
         self._reset()
 
     def _reset(self) -> None:
         self._cur: Optional[_Open] = None
         self._last_nm: dict = {}
 
-    def set_epoch(self, epoch: int) -> None:
+    def set_epoch(self, epoch: int, start_ms: int = 0) -> None:
+        """start_ms: stream time the detector starts at within the epoch (warmup counts from it)."""
         self.epoch = int(epoch)
+        self.start_ms = int(start_ms)
         self._reset()
 
     # ---- helpers ----
@@ -138,7 +141,7 @@ class EventAssembler:
         c, e = self.c, self.e
         events: list = []
         near: list = []
-        warm = now >= int(e["warmupS"]) * 1000
+        warm = now - self.start_ms >= int(e["warmupS"]) * 1000
         chat_warm = warm and frame.warm
 
         # audio triggers / near-miss

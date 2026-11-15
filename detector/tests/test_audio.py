@@ -130,3 +130,26 @@ def test_vad_failure_is_logged_once(caplog):
     assert len(fr) == 10 and all(f.vad == 0.0 for f in fr)
     recs = [r for r in caplog.records if r.name == "hl_detector.audio"]
     assert len(recs) == 1 and recs[0].exc_info
+
+
+def test_reset_with_start_ms_shifts_block_times():
+    a, _ = mk()
+    a.reset(120000)
+    a.feed(tone(-30, 0.3))
+    assert [f.t_ms for f in a.frames()] == [120000, 120100, 120200]
+
+
+def test_skip_to_closes_an_open_spike_at_the_gap_and_keeps_the_baseline():
+    a, _ = mk()
+    a.feed(tone(-30, 30))
+    a.feed(tone(-18, 0.4))  # spike still open
+    a.feed(tone(-18, 0.05))  # half a block pending: discarded by the gap
+    a.skip_to(30450)  # lost audio: the clock jumps from 30400 to 30450
+    a.frames()
+    sp = a.spikes()
+    assert len(sp) == 1 and sp[0].start_ms == 30000 and sp[0].end_ms == 30400
+    a.skip_to(30000)  # behind the clock: ignored
+    a.feed(tone(-30, 0.2))
+    fr = a.frames()
+    assert [f.t_ms for f in fr] == [30450, 30550]
+    assert fr[0].warm  # baseline survived the gap

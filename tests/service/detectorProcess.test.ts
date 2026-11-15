@@ -44,7 +44,7 @@ describe('DetectorProcess', () => {
     await until(() => dp.health().running);
     pcm.write(Buffer.alloc(1000));
     await until(() => lines().length >= 2);
-    expect(lines()[0]).toBe('1 epoch:7');
+    expect(lines()[0]).toBe('1 {"type":"epoch","epoch":7,"startMs":0}');
     expect(lines()[1]).toBe('0 1000');
   });
 
@@ -83,8 +83,63 @@ describe('DetectorProcess', () => {
     const { dp, lines } = make(['--crash-after', '1']);
     dp.start();
     dp.attachPcm(new PassThrough(), 5);
-    await until(() => dp.health().restarts >= 1 && lines().filter((l) => l === '1 epoch:5').length >= 2);
+    await until(() => dp.health().restarts >= 1 && lines().filter((l) => l.startsWith('1 {"type":"epoch","epoch":5,')).length >= 2);
     expect(dp.health().restarts).toBeGreaterThanOrEqual(1);
+  });
+
+  it('re-announces the epoch after a restart with startMs = pcm bytes received / 32', async () => {
+    const { dp, lines } = make(['--crash-after', '2'], { restartDelaysMs: [400] });
+    dp.start();
+    const pcm = new PassThrough();
+    dp.attachPcm(pcm, 5);
+    await until(() => dp.health().running);
+    pcm.write(Buffer.alloc(3200)); // forwarded, then the detector crashes
+    await until(() => !dp.health().running);
+    pcm.write(Buffer.alloc(6401)); // dropped while the detector is down (odd length on purpose)
+    await new Promise((r) => setImmediate(r));
+    await until(() => dp.health().running);
+    pcm.write(Buffer.alloc(320));
+    await until(() => lines().length >= 4);
+    expect(lines()).toEqual([
+      '1 {"type":"epoch","epoch":5,"startMs":0}',
+      '0 3200',
+      '1 {"type":"epoch","epoch":5,"startMs":300}', // floor(9601 / 32)
+      '0 319', // first byte skipped to keep s16 samples aligned
+    ]);
+  });
+
+  it('sends a resync frame with the stream time before forwarding pcm after drops', async () => {
+    const { dp, lines } = make(['--pause-ms', '700']);
+    dp.start();
+    const pcm = new PassThrough({ highWaterMark: 1024 });
+    dp.attachPcm(pcm, 2);
+    await until(() => dp.health().running);
+    const K = 64000; // 2000 ms of audio per chunk
+    let written = 0;
+    for (let i = 0; i < 150; i++) {
+      pcm.write(Buffer.alloc(K));
+      written += K;
+      await new Promise((r) => setImmediate(r));
+    }
+    await new Promise((r) => setTimeout(r, 900)); // the detector reads again, stdin drains
+    pcm.write(Buffer.alloc(K));
+    written += K;
+    await until(() => lines().some((l) => l.includes('"resync"')));
+    await until(() => {
+      const ls = lines();
+      const i = ls.findIndex((l) => l.includes('"resync"'));
+      return i >= 0 && i + 1 < ls.length;
+    });
+    const ls = lines();
+    const i = ls.findIndex((l) => l.includes('"resync"'));
+    const msg = JSON.parse(ls[i].slice(2));
+    const before = ls.slice(0, i).filter((l) => l.startsWith('0 ')).reduce((a, l) => a + Number(l.slice(2)), 0);
+    expect(msg.type).toBe('resync');
+    expect(msg.tMs % 2000).toBe(0); // a chunk boundary in stream time
+    expect(msg.tMs * 32).toBeGreaterThan(before); // some audio was dropped in between
+    expect(msg.tMs * 32).toBeLessThan(written);
+    expect(ls[i + 1].startsWith('0 ')).toBe(true);
+    expect(ls.filter((l) => l.includes('"resync"')).length).toBeGreaterThanOrEqual(1);
   });
 
   it('keeps consuming the pcm stream while the detector is dead', async () => {

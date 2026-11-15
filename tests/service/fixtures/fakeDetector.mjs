@@ -1,5 +1,6 @@
 // Fake hl_detector speaking the stdio protocol. Flags:
-//   --log <file>        append "<type> <length>" per frame ("1 epoch" style for json frames)
+//   --log <file>        append one line per frame: "0 <length>" for pcm, "1 <json body>" for control frames
+//   --pause-ms N        do not read stdin for the first N ms (simulates backpressure)
 //   --crash-after N     exit(1) after N frames
 //   --no-heartbeat      never print anything unprompted
 //   --ignore-stop       ignore the stop frame
@@ -36,8 +37,8 @@ process.stdin.on('data', (d) => {
     let tag = String(len);
     if (kind === 0) pcmBytes += len;
     if (kind === 1) {
-      const msg = JSON.parse(body.toString('utf8'));
-      tag = msg.type + (msg.epoch !== undefined ? ':' + msg.epoch : '');
+      tag = body.toString('utf8');
+      const msg = JSON.parse(tag);
       if (msg.type === 'epoch') {
         out({ type: 'signals', tMs: 0, chatSpike: 0, laughShare: 0, messages: pcmBytes, deltaDb: 0, vad: 0, warm: false });
         if (has('--event')) {
@@ -51,4 +52,8 @@ process.stdin.on('data', (d) => {
     if (frames >= crashAfter) process.exit(1);
   }
 });
+if (opt('--pause-ms')) {
+  process.stdin.pause();
+  setTimeout(() => process.stdin.resume(), Number(opt('--pause-ms')));
+}
 process.stdin.on('end', () => { if (!has('--ignore-stop')) process.exit(0); });

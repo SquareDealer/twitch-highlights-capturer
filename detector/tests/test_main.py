@@ -174,3 +174,84 @@ def test_chat_time_translation_drops_early_and_resets_with_epoch():
     assert e1[0]["tMs"] == 1000
     assert [s for s in e1 if s["tMs"] == 7000][0]["messages"] == 3
     assert [s for s in e1 if s["tMs"] == 7000][0]["laughShare"] == 1.0
+
+
+def _sig(lines):
+    return [l for l in lines if l["type"] == "signals"]
+
+
+def _events(lines):
+    return [l for l in lines if l["type"] == "event"]
+
+
+def test_epoch_start_ms_continues_the_stream_timeline():
+    pcm = speech(70) + tone(-24, 0.6) + speech(12)
+    lines = run(ctl({"type": "epoch", "epoch": 2, "startMs": 120000}) + pcm_frames(pcm) + ctl({"type": "stop"}))
+    sig = _sig(lines)
+    assert sig[0]["tMs"] == 121000
+    assert sig[-1]["tMs"] == 202000
+    # warmup counts from the detector's start within the epoch, not from the epoch's t=0
+    assert not any(s["warm"] for s in sig if s["tMs"] < 180000)
+    assert [s for s in sig if s["tMs"] == 180000][0]["warm"]
+    ev = _events(lines)
+    assert ev and ev[0]["epoch"] == 2 and ev[0]["triggers"] == ["audio"]
+    assert 189_900 <= ev[0]["startMs"] <= 190_100
+    assert ev[0]["endMs"] >= ev[0]["startMs"] and ev[0]["triggerTimeMs"] >= 190_000
+
+
+def test_epoch_without_start_ms_starts_at_zero():
+    lines = run(ctl({"type": "epoch", "epoch": 1}) + pcm_frames(speech(3)) + ctl({"type": "epoch", "epoch": 2, "startMs": "x"})
+                + pcm_frames(speech(2)) + ctl({"type": "stop"}))
+    assert [s["tMs"] for s in _sig(lines)] == [1000, 2000, 3000, 1000, 2000]
+
+
+def test_resync_moves_the_clock_over_the_gap():
+    after = speech(8) + tone(-24, 0.6) + speech(12)
+    data = (ctl({"type": "epoch", "epoch": 3}) + pcm_frames(speech(70)) + ctl({"type": "resync", "tMs": 200000})
+            + pcm_frames(after) + ctl({"type": "stop"}))
+    lines = run(data)
+    ts = [s["tMs"] for s in _sig(lines)]
+    assert ts[69] == 70000 and ts[70] == 201000  # no fake ticks over the gap
+    assert ts[-1] == 220000
+    ev = _events(lines)
+    assert ev and ev[0]["epoch"] == 3 and ev[0]["triggers"] == ["audio"]
+    assert 207_900 <= ev[0]["startMs"] <= 208_100
+
+
+def test_resync_behind_the_clock_is_ignored():
+    data = (ctl({"type": "epoch", "epoch": 1, "startMs": 10000}) + pcm_frames(speech(3))
+            + ctl({"type": "resync", "tMs": 12000}) + pcm_frames(speech(2)) + ctl({"type": "stop"}))
+    assert [s["tMs"] for s in _sig(run(data))] == [11000, 12000, 13000, 14000, 15000]
+
+
+def test_resync_mid_second_discards_the_partial_block():
+    half = speech(0.55)  # 5 full blocks + half a block pending
+    data = ctl({"type": "epoch", "epoch": 1}) + pcm_frames(half) + ctl({"type": "resync", "tMs": 5000}) \
+        + pcm_frames(speech(2)) + ctl({"type": "stop"})
+    assert [s["tMs"] for s in _sig(run(data))] == [6000, 7000]
+
+
+def test_nearmiss_lines_carry_the_epoch():
+    pcm = speech(70) + tone(-29, 0.6) + speech(3)
+    lines = run(ctl({"type": "epoch", "epoch": 4, "startMs": 5000}) + pcm_frames(pcm) + ctl({"type": "stop"}))
+    near = [l for l in lines if l["type"] == "nearmiss"]
+    assert near and all(n["epoch"] == 4 for n in near)
+
+
+def test_chat_time_translation_uses_the_shifted_audio_clock():
+    import threading
+
+    W = 1_700_000_000_000
+    g = {i: threading.Event() for i in range(1, 4)}
+    chat = _ScriptedChat([("wait", g[1])] + [("msg", (W + 2000, "u%d" % i, "ахахах")) for i in range(10)] + [("set", g[2])])
+    stdin = _Script([
+        ("data", ctl({"type": "epoch", "epoch": 1, "startMs": 120000})), ("data", _frame(0, speech(10))), ("set", g[1]),
+        ("wait", g[2]), ("data", _frame(0, speech(5))), ("data", ctl({"type": "stop"})),
+    ])
+    out = io.StringIO()
+    rc = main(["--channel", "x", "--config", CFG], stdin=stdin, stdout=out, chat=chat, vad=FakeVad(), clock=lambda: W)
+    assert rc == 0
+    sig = _sig([json.loads(l) for l in out.getvalue().splitlines()])
+    # offset = W - 130000 -> messages land at t=132000, inside the 5 s window at 135000
+    assert [s for s in sig if s["tMs"] == 131000][0]["messages"] == 0
+    assert [s for s in sig if s["tMs"] == 135000][0]["messages"] == 10

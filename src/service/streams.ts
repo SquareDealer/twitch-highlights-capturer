@@ -49,8 +49,10 @@ export interface Notice {
 const NOT_A_CHANNEL = 'Это не ссылка на канал Twitch';
 const ALREADY_RECORDING = 'Этот канал уже записывается';
 const LEAVE_MULTI_FIRST = 'Сначала остановите лишние эфиры: в режиме «один эфир» может идти только один';
-const limitReached = (n: number) =>
-  `Достигнут лимит одновременных эфиров (${n}). Остановите один из эфиров или включите режим «несколько эфиров»`;
+const limitReached = (n: number, multiStream: boolean) =>
+  multiStream
+    ? `Достигнут лимит одновременных эфиров (${n}). Остановите один из эфиров`
+    : `Достигнут лимит одновременных эфиров (${n}). Остановите один из эфиров или включите режим «несколько эфиров»`;
 
 const MAX_PINNED_BYTES = 2 * 1024 ** 3;
 const STATUS_INTERVAL_MS = 1000;
@@ -120,8 +122,8 @@ export class StreamRegistry extends EventEmitter {
     const channel = parseChannelUrl(url);
     if (!channel) return { ok: false, error: NOT_A_CHANNEL };
     if ([...this.streams.values()].some((s) => s.channel === channel)) return { ok: false, error: ALREADY_RECORDING };
-    const { limit } = this.mode();
-    if (this.streams.size >= limit) return { ok: false, error: limitReached(limit) };
+    const { limit, multiStream } = this.mode();
+    if (this.streams.size >= limit) return { ok: false, error: limitReached(limit, multiStream) };
 
     const stream = this.create(channel, quality);
     const started = stream.manager.start(channel, { quality, pcm: true });
