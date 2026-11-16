@@ -75,7 +75,7 @@ export class Cutter extends EventEmitter {
       const cfg = this.deps.config();
       if (await this.checkPaused(cfg)) return;
       if (this.overLimit(ev)) return;
-      const preRoll = ev.confidence === 'low' && !ev.triggers.includes('audio') ? cfg.preRollLowConfidenceMs : cfg.preRollMs;
+      const preRoll = ev.confidence === 'low' ? cfg.preRollLowConfidenceMs : cfg.preRollMs;
       const from = Math.max(0, ev.startMs - preRoll);
       const to = Math.min(ev.endMs + cfg.postRollMs, from + cfg.maxClipMs);
       await this.cut(ev, from, to, true);

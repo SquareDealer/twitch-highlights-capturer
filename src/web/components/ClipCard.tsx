@@ -46,7 +46,7 @@ export function ClipCard({ clip, onChange }: { clip: PublicClip; onChange: (c: P
         <div className="clip-head">
           <strong>{clip.streamer}</strong>
           <span className="muted">
-            {clockTime(clip.createdAt)} · {duration(clip.durationMs)} · {clip.triggers.map(triggerLabel).join(' + ')}{clip.triggers.includes('manual') ? '' : ` · оценка ${num(clip.score)}`}
+            {clockTime(clip.createdAt)} · {duration(clip.durationMs)} · {clip.triggers.map(triggerLabel).join(' + ')}{clip.triggers.includes('manual') ? '' : clip.signals.triggerShare === undefined && clip.score < 1 ? ` · S ${num(clip.score, 2)}` : ` · оценка ${num(clip.score)}`}
           </span>
           {clip.confidence === 'low' && <span className="badge warn">низкая уверенность</span>}
         </div>

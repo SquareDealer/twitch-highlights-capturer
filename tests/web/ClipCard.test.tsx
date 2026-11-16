@@ -61,6 +61,12 @@ it('shows «файл удалён» and no download link for a deleted file', ()
   expect(screen.queryByText('Скачать')).toBeNull();
 });
 
+it('keeps the legacy «S 0,74» text for an old clip without triggerShare', () => {
+  render(<ClipCard clip={clip({ score: 0.74 })} onChange={() => {}} />);
+  expect(screen.getByText(/S 0,74/)).toBeTruthy();
+  expect(screen.queryByText(/оценка/)).toBeNull();
+});
+
 it('shows no score for a manual clip', () => {
   render(<ClipCard clip={clip({ triggers: ['manual'], score: 0 })} onChange={() => {}} />);
   expect(screen.getByText(/вручную/)).toBeTruthy();

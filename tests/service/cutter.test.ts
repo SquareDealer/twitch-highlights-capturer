@@ -117,11 +117,10 @@ test('uses the 30 s pre-roll for a low-confidence chat event', async () => {
   expect(only().startMs).toBe(70_000);
 });
 
-test('keeps 15 s for a low-confidence audio-only event', async () => {
+test('uses the 30 s pre-roll for low confidence with laugh + audio', async () => {
   fill(1, 0, 70);
-  await cutter.onEvent(event({ confidence: 'low', triggers: ['audio'] }));
-  expect(lastRange()[0]).toBe(84); // 85 s requested, cut from the segment that contains it
-  expect(only().startMs).toBe(84_000);
+  await cutter.onEvent(event({ confidence: 'low', triggers: ['laugh', 'audio'] }));
+  expect(only().startMs).toBe(70_000);
 });
 
 test('caps the clip at maxClipMs', async () => {
@@ -194,10 +193,10 @@ test('manual clips do not count toward the hourly limiter', async () => {
   fill(1, 0, 70);
   cfg.maxClipsPerHour = 2;
   for (let i = 0; i < 5; i++) expect((await cutter.manual()).ok).toBe(true);
-  await cutter.onEvent(event({ scores: { total: 0.1, share: 0, speed: 0, audio: 0 } }));
-  await cutter.onEvent(event({ scores: { total: 0.2, share: 0, speed: 0, audio: 0 } }));
+  await cutter.onEvent(event({ scores: { total: 1.1, share: 0, speed: 0, audio: 0 } }));
+  await cutter.onEvent(event({ scores: { total: 2.2, share: 0, speed: 0, audio: 0 } }));
   expect(clips.list().filter((c) => c.triggers[0] === 'laugh')).toHaveLength(2);
-  await cutter.onEvent(event({ scores: { total: 0.05, share: 0, speed: 0, audio: 0 } })); // over limit, below median
+  await cutter.onEvent(event({ scores: { total: 0.5, share: 0, speed: 0, audio: 0 } })); // over limit, below median
   expect(clips.list()).toHaveLength(7);
 });
 
@@ -227,13 +226,13 @@ test('cuts what exists when the event starts before the oldest segment', async (
 test('drops events over the hourly limit unless the score beats the median', async () => {
   fill(1, 0, 70);
   cfg.maxClipsPerHour = 3;
-  for (const s of [0.2, 0.5, 0.9]) {
+  for (const s of [2.2, 5.5, 9.1]) {
     await cutter.onEvent(event({ scores: { total: s, share: 0, speed: 0, audio: 0 } }));
   }
   expect(clips.list()).toHaveLength(3);
-  await cutter.onEvent(event({ scores: { total: 0.5, share: 0, speed: 0, audio: 0 } })); // == median
+  await cutter.onEvent(event({ scores: { total: 5.5, share: 0, speed: 0, audio: 0 } })); // == median
   expect(clips.list()).toHaveLength(3);
-  await cutter.onEvent(event({ scores: { total: 0.6, share: 0, speed: 0, audio: 0 } })); // > median
+  await cutter.onEvent(event({ scores: { total: 6.6, share: 0, speed: 0, audio: 0 } })); // > median
   expect(clips.list()).toHaveLength(4);
   const m = await cutter.manual();
   expect(m.ok).toBe(true);
