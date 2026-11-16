@@ -72,3 +72,15 @@ textarea { width: 100%; resize: vertical; font-family: ui-monospace, Consolas, m
 .field .hint { font-size: 13px; }
 .field .error { margin-top: 0; font-size: 14px; }
 @media (min-width: 700px) { .profiles { grid-template-columns: 220px 1fr; } }
+
+.tuning { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; }
+.tuning h4 { margin: 10px 0 4px; color: var(--muted); font-weight: 600; }
+.tuning .cond { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.tuning .cond.ok > span:first-child { color: var(--ok); }
+.tuning .cond.bad > span:first-child { color: var(--bad); }
+.tuning .spark-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.tuning .spark-row > span { width: 64px; }
+.sparkline { flex: 1; height: 40px; background: #14161d; border-radius: 6px; }
+.sparkline .line { stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.sparkline .threshold { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.tuning .log-entry { padding: 2px 0; }

@@ -137,3 +137,14 @@ the last ~9 min. Chat on recrent was slow (0–4 messages/s).
   eslcs 0.
 - Takeaway for threshold tuning: every audio near-miss failed the `strong` run (15 dB / VAD 0.7 / 500 ms), chat ones failed laugh share and mass spike;
   a longer run on an active channel is still needed before changing thresholds.
+
+## Profiles and tuning mode
+
+Live check to perform (`npm run service:build`, `npm run service`, sign in, start a stream of any live channel). Record the results below each step.
+
+- [ ] 1. The «Профили» tab has «По умолчанию» with the values from `config.json`.
+- [ ] 2. Create a copy «Тест», select it on the stream card: «применяется…» disappears within 1–2 s, the log shows `применён профиль «Тест»`.
+- [ ] 3. Switch «Настройка» on: the values refresh once a second, the charts grow.
+- [ ] 4. Change «Доля активных, не меньше» to 0,5 and save: the threshold in the condition row and the line on the chart change within 1–2 s; the «детектор не работает» badge never appeared, the warm-up in the panel did not start over.
+- [ ] 5. Put the pattern `^([ах]+)+$` into «Смех»: saving is rejected with an explanation.
+- [ ] 6. Stop the stream, delete «Тест», probe the channel again: the start form preselects «По умолчанию».

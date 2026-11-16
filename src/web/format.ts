@@ -29,7 +29,9 @@ export function duration(ms: number): string {
   return s === 0 ? `${m} мин` : `${m} мин ${s} с`;
 }
 
-export function clockTime(iso: string): string {
+export function clockTime(iso: string, seconds = false): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString('ru-RU', seconds ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
 }

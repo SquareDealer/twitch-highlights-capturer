@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import type { Profile } from '../../service/profiles';
 import type { StreamStatus } from '../../service/streams';
+import type { TuningEntry } from '../../service/tuningLog';
 import { api, type CuttingState } from '../api';
 import { StreamCard } from '../components/StreamCard';
 
@@ -11,16 +13,21 @@ export function Streams({
   streams,
   multiStream,
   cutting,
+  profiles,
+  tuningLive,
   onMode,
 }: {
   streams: StreamStatus[];
   multiStream: boolean;
   cutting: CuttingState;
+  profiles: Profile[];
+  tuningLive: Record<string, TuningEntry[]>;
   onMode: (multiStream: boolean) => void;
 }) {
   const [url, setUrl] = useState('');
   const [qualities, setQualities] = useState<string[] | null>(null);
   const [quality, setQuality] = useState('best');
+  const [profileId, setProfileId] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -31,6 +38,7 @@ export function Streams({
     try {
       const r = await api.probe(url.trim());
       setQualities(r.qualities);
+      setProfileId(r.profileId);
       setQuality(r.qualities.includes('best') ? 'best' : (r.qualities[0] ?? 'best'));
     } catch (e) {
       setError(message(e));
@@ -43,7 +51,7 @@ export function Streams({
     setBusy(true);
     setError('');
     try {
-      await api.startStream(url.trim(), quality);
+      await api.startStream(url.trim(), quality, profileId);
       setUrl('');
       setQualities(null);
     } catch (e) {
@@ -86,6 +94,11 @@ export function Streams({
                 <option key={q} value={q}>{q}</option>
               ))}
             </select>
+            <select value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} aria-label="Профиль">
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
             <button className="primary" disabled={busy} onClick={start}>Начать</button>
           </div>
         )}
@@ -95,7 +108,7 @@ export function Streams({
         </label>
         {error && <div className="error">{error}</div>}
       </div>
-      {streams.length === 0 ? <p className="muted empty">Сейчас ничего не записывается</p> : streams.map((s) => <StreamCard key={s.id} stream={s} />)}
+      {streams.length === 0 ? <p className="muted empty">Сейчас ничего не записывается</p> : streams.map((s) => <StreamCard key={s.id} stream={s} profiles={profiles} liveEntries={tuningLive[s.id] ?? []} />)}
     </section>
   );
 }

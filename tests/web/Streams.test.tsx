@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { defaultConfig } from '../../src/service/config';
+import type { Profile } from '../../src/service/profiles';
+import { settingsFromConfig } from '../../src/service/profileSettings';
 import type { StreamStatus } from '../../src/service/streams';
 import { Streams } from '../../src/web/views/Streams';
 
 const mocks = vi.hoisted(() => ({
-  probe: vi.fn(), startStream: vi.fn(), stopStream: vi.fn(), manualClip: vi.fn(), setMode: vi.fn(),
+  probe: vi.fn(), startStream: vi.fn(), stopStream: vi.fn(), manualClip: vi.fn(), setMode: vi.fn(), setStreamProfile: vi.fn(), tuning: vi.fn(),
 }));
 vi.mock('../../src/web/api', () => {
   class ApiError extends Error {
@@ -22,10 +25,16 @@ const stream = (over: Partial<StreamStatus> = {}): StreamStatus => ({
   profile: { id: 'p1', name: 'По умолчанию' }, profileVersion: 1, profileApplied: 1, profileBadPatterns: [],
   ...over,
 });
+const prof = (id: string, name: string): Profile => ({ id, name, isDefault: id === 'p1', settings: settingsFromConfig(defaultConfig('/d')), createdAt: '', updatedAt: '' });
+const PROFILES = [prof('p1', 'По умолчанию'), prof('p2', 'Крупный канал')];
 const view = (p: Partial<Parameters<typeof Streams>[0]> = {}) =>
-  render(<Streams streams={[]} multiStream={false} cutting={{ paused: false, reason: null }} onMode={() => {}} {...p} />);
+  render(<Streams streams={[]} multiStream={false} cutting={{ paused: false, reason: null }} profiles={PROFILES} tuningLive={{}} onMode={() => {}} {...p} />);
 
-beforeEach(() => Object.values(mocks).forEach((m) => m.mockReset()));
+beforeEach(() => {
+  Object.values(mocks).forEach((m) => m.mockReset());
+  mocks.tuning.mockResolvedValue({ frames: [], entries: [] });
+  localStorage.clear();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -51,14 +60,14 @@ it('does not enable multi mode when the confirmation is declined', () => {
 
 it('shows the api error text when start fails', async () => {
   const { ApiError } = await import('../../src/web/api');
-  mocks.probe.mockResolvedValue({ channel: 'shroud', qualities: ['best', '720p'] });
+  mocks.probe.mockResolvedValue({ channel: 'shroud', qualities: ['best', '720p'], profileId: 'p1' });
   mocks.startStream.mockRejectedValue(new ApiError(409, 'Достигнут лимит эфиров: 1'));
   view();
   fireEvent.change(screen.getByPlaceholderText('Ссылка на канал Twitch'), { target: { value: 'https://twitch.tv/shroud' } });
   fireEvent.click(screen.getByText('Проверить'));
   fireEvent.click(await screen.findByText('Начать'));
   expect(await screen.findByText('Достигнут лимит эфиров: 1')).toBeTruthy();
-  expect(mocks.startStream).toHaveBeenCalledWith('https://twitch.tv/shroud', 'best');
+  expect(mocks.startStream).toHaveBeenCalledWith('https://twitch.tv/shroud', 'best', 'p1');
 });
 
 it('marks a stream whose detector is down and one without chat', () => {
@@ -82,4 +91,43 @@ it('does not show a stale detector error while the detector runs', () => {
 it('shows the cutting-paused banner', () => {
   view({ cutting: { paused: true, reason: 'Мало места на диске' } });
   expect(screen.getByText('Мало места на диске')).toBeTruthy();
+});
+
+it('preselects the remembered profile and starts with the chosen one', async () => {
+  mocks.probe.mockResolvedValue({ channel: 'shroud', qualities: ['best'], profileId: 'p2' });
+  mocks.startStream.mockResolvedValue(stream());
+  view();
+  fireEvent.change(screen.getByPlaceholderText('Ссылка на канал Twitch'), { target: { value: 'https://twitch.tv/shroud' } });
+  fireEvent.click(screen.getByText('Проверить'));
+  const select = (await screen.findByLabelText('Профиль')) as HTMLSelectElement;
+  expect(select.value).toBe('p2');
+  fireEvent.change(select, { target: { value: 'p1' } });
+  fireEvent.click(screen.getByText('Начать'));
+  await waitFor(() => expect(mocks.startStream).toHaveBeenCalledWith('https://twitch.tv/shroud', 'best', 'p1'));
+});
+
+it('switches the profile on the card', async () => {
+  mocks.setStreamProfile.mockResolvedValue(stream());
+  view({ streams: [stream()] });
+  fireEvent.change(screen.getByLabelText('Профиль'), { target: { value: 'p2' } });
+  await waitFor(() => expect(mocks.setStreamProfile).toHaveBeenCalledWith('s1', 'p2'));
+});
+
+it('shows «применяется…» until the detector acknowledges', () => {
+  const { rerender } = view({ streams: [stream({ profileVersion: 2, profileApplied: 1 })] });
+  expect(screen.getByText('применяется…')).toBeTruthy();
+  rerender(<Streams streams={[stream({ profileVersion: 2, profileApplied: 2 })]} multiStream={false} cutting={{ paused: false, reason: null }} profiles={PROFILES} tuningLive={{}} onMode={() => {}} />);
+  expect(screen.queryByText('применяется…')).toBeNull();
+});
+
+it('remembers the tuning switch per channel', async () => {
+  const { unmount } = view({ streams: [stream()] });
+  expect(screen.queryByText('Журнал')).toBeNull();
+  fireEvent.click(screen.getByLabelText('Настройка'));
+  expect(localStorage.getItem('hl.tuning.shroud')).toBe('1');
+  expect(await screen.findByText('Журнал')).toBeTruthy();
+  unmount();
+  cleanup();
+  view({ streams: [stream()] });
+  expect(await screen.findByText('Журнал')).toBeTruthy();
 });

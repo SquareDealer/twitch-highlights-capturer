@@ -19,7 +19,7 @@ export function App() {
   const [cutting, setCutting] = useState<CuttingState>({ paused: false, reason: null });
   const [profiles, setProfiles] = useState<Profile[]>([]);
   // Live tuning entries per stream (newest last, at most 100): consumed by the tuning panel.
-  const [, setTuningLive] = useState<Record<string, TuningEntry[]>>({});
+  const [tuningLive, setTuningLive] = useState<Record<string, TuningEntry[]>>({});
   const [clips, setClips] = useState<PublicClip[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const authed = screen === 'streams' || screen === 'feed' || screen === 'profiles';
@@ -85,7 +85,7 @@ export function App() {
         <div className={`notice ${notice.level}`} onClick={() => setNotice(null)}>{notice.message}</div>
       )}
       {screen === 'streams' ? (
-        <Streams streams={streams} multiStream={multi} cutting={cutting} onMode={setMulti} />
+        <Streams streams={streams} multiStream={multi} cutting={cutting} profiles={profiles} tuningLive={tuningLive} onMode={setMulti} />
       ) : screen === 'profiles' ? (
         <Profiles profiles={profiles} streams={streams} />
       ) : (

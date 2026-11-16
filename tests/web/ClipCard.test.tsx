@@ -72,3 +72,11 @@ it('shows no score for a manual clip', () => {
   expect(screen.getByText(/вручную/)).toBeTruthy();
   expect(screen.queryByText(/оценка/)).toBeNull();
 });
+
+it('shows the profile a clip was cut with', () => {
+  const { unmount } = render(<ClipCard clip={clip({ profileId: 'p', profileName: 'Крупный канал' })} onChange={() => {}} />);
+  expect(screen.getByText(/профиль Крупный канал/)).toBeTruthy();
+  unmount();
+  render(<ClipCard clip={clip({ profileName: null })} onChange={() => {}} />);
+  expect(screen.queryByText(/профиль/)).toBeNull();
+});

@@ -86,3 +86,16 @@ it('shows the api error', async () => {
   fireEvent.click(screen.getByText('Удалить'));
   expect(await screen.findByText('Профиль используется')).toBeTruthy();
 });
+
+it('does not write a pending save into the profile selected meanwhile', async () => {
+  let resolve!: (p: Profile) => void;
+  mocks.updateProfile.mockReturnValue(new Promise<Profile>((r) => (resolve = r)));
+  render(<Profiles profiles={[D, BIG]} streams={[]} />);
+  fireEvent.change(screen.getByLabelText('Название'), { target: { value: 'Новое имя' } });
+  fireEvent.click(screen.getByText('Сохранить'));
+  fireEvent.click(screen.getByText('Крупный канал'));
+  expect(nameField()).toBe('Крупный канал');
+  resolve({ ...D, name: 'Новое имя' });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(nameField()).toBe('Крупный канал');
+});

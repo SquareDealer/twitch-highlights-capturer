@@ -76,7 +76,7 @@ export function Profiles({ profiles, streams }: { profiles: Profile[]; streams: 
               </button>
             </div>
           )}
-          <ProfileEditor profile={selected} streams={streams} />
+          <ProfileEditor key={selected.id} profile={selected} streams={streams} />
         </div>
       )}
     </section>
