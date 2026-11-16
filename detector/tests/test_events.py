@@ -255,3 +255,10 @@ def test_open_state_follows_the_event():
     for sec in range(72, 100):
         asm.on_tick(sec * 1000, quiet(sec), [], lambda lo, hi: [])
     assert asm.open_state(99_000) is None
+
+
+def test_preview_with_degenerate_score_ranges_does_not_divide_by_zero():
+    cfg = overlay(DEFAULTS, {"score": {"spikeFull": 1, "audioFullDb": 10, "shareFull": 0.05}})
+    asm = EventAssembler(cfg)
+    assert asm.preview(tf(70, msgs=4, authors=4, active=40, spike=4.0), 15.0) == {"total": 10.0, "share": 5.0, "speed": 3.0, "audio": 1.0}
+    assert asm.preview(tf(70, msgs=0, authors=0, active=40, spike=0.5), 5.0) == {"total": 1.0, "share": 0.0, "speed": 0.0, "audio": 0.0}

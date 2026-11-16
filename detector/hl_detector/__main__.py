@@ -126,7 +126,8 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
             "event": asm.open_state(t),
         }
         emit({
-            "type": "signals", "tMs": t, "chatSpike": round(frame.spike, 3), "laughShare": round(frame.laugh_share, 3),
+            "type": "signals", "epoch": asm.epoch, "tMs": t,
+            "chatSpike": round(frame.spike, 3), "laughShare": round(frame.laugh_share, 3),
             "messages": frame.messages, "triggerShare": round(frame.trigger_share, 3),
             "triggerMessages": frame.trigger_messages, "activeAuthors": frame.active_authors,
             "deltaDb": round(fr.delta_db, 3) if fr else 0.0,
@@ -176,6 +177,7 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
                 raise ValueError("version: ожидалось целое число")
             new = overlay(cfg, msg.get("detector"))
             warm_ms = int(new["events"]["warmupS"]) * 1000
+            bad = bad_patterns(new["chat"]["laughWords"]) + bad_patterns(new["chat"]["reactionWords"])
             old = conf["cfg"]
             try:
                 audio.reconfigure(new["audio"])
@@ -185,7 +187,6 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
                 audio.reconfigure(old["audio"])
                 asm.reconfigure(old)
                 raise
-            bad = bad_patterns(new["chat"]["laughWords"]) + bad_patterns(new["chat"]["reactionWords"])
         except Exception as e:
             log.warning("Кадр config отклонён: %s", e)
             emit({"type": "config", "version": version, "badPatterns": [], "error": str(e) or type(e).__name__}, stdout)

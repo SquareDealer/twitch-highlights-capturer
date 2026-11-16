@@ -68,6 +68,8 @@ class _Open:
 
 
 def _lin(x: float, a: float, b: float, top: float) -> float:
+    if b <= a:  # degenerate range (possible from an unvalidated config.json): a step at a
+        return top if x >= a else 0.0
     return min(1.0, max(0.0, (x - a) / (b - a))) * top
 
 

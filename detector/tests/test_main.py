@@ -372,3 +372,19 @@ def test_absurd_events_value_is_refused_and_detector_keeps_running(key):
     assert ack["error"] and ack["badPatterns"] == []
     assert len(_events(lines)) == 1
     assert any(l["tMs"] > 71000 for l in _sig(lines))
+
+
+def test_pattern_python_cannot_compile_is_skipped_and_the_frame_is_accepted():
+    frame = CONFIG(8, laughWords=["ха{99999999999}", "^[ах]*ха[ах]*$"])
+    lines = run_chat(pcm_frames(speech(80) + tone(-24, 0.6)) + frame, LAUGHS,
+                     pcm_frames(speech(12)) + ctl({"type": "stop"}))
+    ack = [l for l in lines if l["type"] == "config" and l["version"] == 8][0]
+    assert "error" not in ack and ack["badPatterns"] == ["ха{99999999999}"]
+    assert len(_events(lines)) == 1
+
+
+def test_signals_lines_carry_the_epoch():
+    before = pcm_frames(speech(3)) + ctl({"type": "epoch", "epoch": 4, "startMs": 0}) + pcm_frames(speech(3))
+    lines = run(before + ctl({"type": "stop"}))
+    sig = _sig(lines)
+    assert [s["epoch"] for s in sig] == [0, 0, 0, 4, 4, 4]

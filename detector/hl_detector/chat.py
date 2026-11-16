@@ -56,7 +56,7 @@ def _compile(w: str):
         return None
     try:
         return re.compile(w.replace(r"\d", "[0-9]"), re.IGNORECASE)
-    except re.error:
+    except Exception:  # re.error, but also OverflowError for a quantifier of 2**32-1 or more
         return None
 
 
