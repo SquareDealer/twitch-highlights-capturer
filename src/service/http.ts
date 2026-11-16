@@ -6,11 +6,13 @@ import { end, MIME, sendFile } from '../main/server';
 import { Sessions } from './auth';
 import type { createClipRepo } from './clipRepo';
 import type { ServiceConfig } from './config';
+import type { Profile, ProfileService } from './profiles';
 import type { StreamRegistry } from './streams';
 import type { ClipStatus, FeedClip } from './types';
 
 export interface HttpDeps {
   registry: StreamRegistry;
+  profiles: ProfileService;
   clips: ReturnType<typeof createClipRepo>;
   config: () => ServiceConfig;
   webDir: string;
@@ -53,8 +55,8 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': String(data.length), 'Cache-Control': 'no-store' });
   res.end(data);
 }
-const fail = (res: ServerResponse, status: number, error: string, headers: Record<string, string> = {}) => {
-  const data = Buffer.from(JSON.stringify({ error }));
+const fail = (res: ServerResponse, status: number, error: string, headers: Record<string, string> = {}, path?: string) => {
+  const data = Buffer.from(JSON.stringify(path === undefined ? { error } : { error, path }));
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': String(data.length), ...headers });
   res.end(data);
 };
@@ -104,8 +106,8 @@ function sameOrigin(origin: string, host: string | undefined): boolean {
 
 /** Routes whose handlers read a JSON body. */
 const readsBody = (method: string, path: string) =>
-  (method === 'POST' && /^\/api\/(login|probe|streams)$/.test(path)) ||
-  (method === 'PUT' && path === '/api/mode') ||
+  (method === 'POST' && /^\/api\/(login|probe|streams|profiles)$/.test(path)) ||
+  (method === 'PUT' && (path === '/api/mode' || /^\/api\/profiles\/[^/]+$/.test(path) || /^\/api\/streams\/[^/]+\/profile$/.test(path))) ||
   (method === 'POST' && /^\/api\/clips\/[^/]+\/status$/.test(path));
 
 export async function startHttp(
@@ -120,7 +122,13 @@ export async function startHttp(
 
   const broadcast = (event: string, data: unknown): void => {
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const res of sse.keys()) res.write(frame);
+    for (const res of sse.keys()) {
+      try {
+        res.write(frame);
+      } catch {
+        sse.delete(res); // a dead response must never throw back into the emitter
+      }
+    }
   };
 
   const onStreams = (v: unknown) => broadcast('streams', v);
@@ -128,7 +136,11 @@ export async function startHttp(
   const onNotice = (v: unknown) => broadcast('notice', v);
   deps.registry.on('streams', onStreams);
   deps.registry.on('clip', onClip);
+  const onTuning = (v: unknown) => broadcast('tuning', v);
+  const onProfiles = (v: Profile[]) => broadcast('profiles', v);
   deps.registry.on('notice', onNotice);
+  deps.registry.on('tuning', onTuning);
+  deps.profiles.on('list', onProfiles);
   const closeStream = (res: ServerResponse): void => {
     sse.delete(res);
     res.end();
@@ -177,7 +189,7 @@ export async function startHttp(
     }
 
     if (method === 'GET' && path === '/api/state') {
-      return json(res, 200, { streams: deps.registry.list(), mode: deps.registry.mode(), cutting: deps.cuttingPaused() });
+      return json(res, 200, { streams: deps.registry.list(), mode: deps.registry.mode(), cutting: deps.cuttingPaused(), profiles: deps.profiles.list() });
     }
 
     if (method === 'GET' && path === '/api/events') {
@@ -203,7 +215,8 @@ export async function startHttp(
     if (method === 'POST' && path === '/api/streams') {
       const body = await readJson(req);
       if (typeof body.url !== 'string' || typeof body.quality !== 'string' || !body.quality) return fail(res, 400, BAD_REQUEST);
-      const r = await deps.registry.start(body.url, body.quality);
+      if (body.profileId !== undefined && typeof body.profileId !== 'string') return fail(res, 400, BAD_REQUEST);
+      const r = await deps.registry.start(body.url, body.quality, ...(body.profileId === undefined ? [] : [body.profileId]));
       return r.ok ? json(res, 201, r.value) : fail(res, isConflict(r.error) ? 409 : 400, r.error);
     }
 
@@ -213,10 +226,45 @@ export async function startHttp(
       return end(res, 204);
     }
 
+    m = /^\/api\/streams\/([^/]+)\/profile$/.exec(path);
+    if (m && method === 'PUT') {
+      const body = await readJson(req);
+      if (typeof body.profileId !== 'string') return fail(res, 400, BAD_REQUEST);
+      const r = deps.registry.setProfile(decodeParam(m[1]!), body.profileId);
+      return r.ok ? json(res, 200, r.value) : fail(res, r.error === 'Эфир не найден' ? 404 : 400, r.error);
+    }
+
+    m = /^\/api\/streams\/([^/]+)\/tuning$/.exec(path);
+    if (m && method === 'GET') {
+      const t = deps.registry.tuning(decodeParam(m[1]!));
+      return t ? json(res, 200, t) : fail(res, 404, 'Эфир не найден');
+    }
+
     m = /^\/api\/streams\/([^/]+)\/manual-clip$/.exec(path);
     if (m && method === 'POST') {
       const r = await deps.registry.manualClip(decodeParam(m[1]!));
       return r.ok ? json(res, 201, publicClip(r.value)) : fail(res, 400, r.error);
+    }
+
+    if (method === 'GET' && path === '/api/profiles') return json(res, 200, deps.profiles.list());
+
+    if (method === 'POST' && path === '/api/profiles') {
+      const body = await readJson(req);
+      const r = deps.profiles.create(body.name, body.copyFrom);
+      return r.ok ? json(res, 201, r.value) : fail(res, r.status, r.error, {}, r.path);
+    }
+
+    m = /^\/api\/profiles\/([^/]+)$/.exec(path);
+    if (m && method === 'PUT') {
+      const body = await readJson(req);
+      const r = deps.profiles.update(decodeParam(m[1]!), { name: body.name, settings: body.settings });
+      return r.ok ? json(res, 200, r.value) : fail(res, r.status, r.error, {}, r.path);
+    }
+    if (m && method === 'DELETE') {
+      const id = decodeParam(m[1]!);
+      if (deps.registry.profileInUse(id)) return fail(res, 409, 'Профиль используется идущим эфиром');
+      const r = deps.profiles.remove(id);
+      return r.ok ? end(res, 204) : fail(res, r.status, r.error, {}, r.path);
     }
 
     if (method === 'PUT' && path === '/api/mode') {
@@ -340,6 +388,8 @@ export async function startHttp(
         deps.registry.off('streams', onStreams);
         deps.registry.off('clip', onClip);
         deps.registry.off('notice', onNotice);
+        deps.registry.off('tuning', onTuning);
+        deps.profiles.off('list', onProfiles);
         for (const res of sse.keys()) res.end();
         sse.clear();
         server.close(() => done());

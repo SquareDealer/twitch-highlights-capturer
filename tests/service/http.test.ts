@@ -6,6 +6,8 @@ import { openDb } from '../../src/main/db';
 import { createClipRepo } from '../../src/service/clipRepo';
 import { defaultConfig } from '../../src/service/config';
 import { startHttp } from '../../src/service/http';
+import { settingsFromConfig } from '../../src/service/profileSettings';
+import { ProfileService, type Profile } from '../../src/service/profiles';
 import type { FeedClip } from '../../src/service/types';
 import { tmpDir } from '../helpers';
 
@@ -24,6 +26,9 @@ class FakeRegistry extends EventEmitter {
     this.multi = on;
     return { ok: true, value: null };
   });
+  setProfile = vi.fn((_id: string, _profileId: string): any => ({ ok: true, value: { id: 's1', channel: 'alice' } }));
+  profileInUse = vi.fn((_id: string) => false);
+  tuning = vi.fn((_id: string): any => ({ frames: [], entries: [] }));
 }
 
 const clip = (id: string, over: Partial<FeedClip> = {}): FeedClip => ({
@@ -40,6 +45,8 @@ let clips: ReturnType<typeof createClipRepo>;
 let http: Awaited<ReturnType<typeof startHttp>>;
 let paused = { paused: false, reason: null as string | null };
 let base: string;
+let profiles: ProfileService;
+let def: Profile;
 
 beforeEach(async () => {
   root = tmpDir();
@@ -50,14 +57,17 @@ beforeEach(async () => {
   writeFileSync(join(root, 'config.json'), '{"password":"leak"}');
   writeFileSync(join(root, 'a.mp4'), FILE);
   registry = new FakeRegistry();
-  clips = createClipRepo(openDb(':memory:'));
+  const db = openDb(':memory:');
+  clips = createClipRepo(db);
+  profiles = new ProfileService(db, () => settingsFromConfig(defaultConfig(root)));
+  def = profiles.defaultProfile();
   clips.insert(clip('c-new', { mp4Path: join(root, 'a.mp4'), createdAt: '2026-11-15T10:00:00.000Z' }));
   clips.insert(clip('c-pending', { status: 'pending', createdAt: '2026-11-15T09:00:00.000Z' }));
   clips.insert(clip('c-error', { status: 'error', error: 'x', createdAt: '2026-11-15T08:00:00.000Z' }));
   clips.insert(clip('c-gone', { fileDeleted: true, mp4Path: join(root, 'a.mp4'), createdAt: '2026-11-15T07:00:00.000Z' }));
   paused = { paused: false, reason: null };
   http = await startHttp(
-    { registry: registry as any, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir, cuttingPaused: () => paused },
+    { registry: registry as any, profiles, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir, cuttingPaused: () => paused },
     0,
     '127.0.0.1',
   );
@@ -137,6 +147,7 @@ it('returns the state with streams, mode and cutting', async () => {
     streams: [{ id: 's1', channel: 'alice' }],
     mode: { multiStream: false, limit: 1 },
     cutting: { paused: true, reason: 'Мало места' },
+    profiles: JSON.parse(JSON.stringify(profiles.list())),
   });
 });
 
@@ -442,7 +453,7 @@ it('closes SSE streams whose token is no longer valid at the ping', async () => 
   vi.useFakeTimers({ toFake: ['setInterval', 'Date'] });
   try {
     const local = await startHttp(
-      { registry: registry as any, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir: join(root, 'web'), cuttingPaused: () => paused },
+      { registry: registry as any, profiles, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir: join(root, 'web'), cuttingPaused: () => paused },
       0,
       '127.0.0.1',
     );
@@ -492,4 +503,145 @@ it('cuts off a chunked body on a route that does not read it', async () => {
     for (let i = 0; i < 8; i++) req.write(chunk); // never ended: only the server can close the connection
   });
   expect(closed).toBe(true);
+});
+
+describe('profiles', () => {
+  it('lists, creates, updates and deletes profiles', async () => {
+    const c = await login();
+    const list = async () => (await (await api(c, 'GET', '/api/profiles')).json()) as Profile[];
+    const first = await api(c, 'GET', '/api/profiles');
+    expect(first.status).toBe(200);
+    expect((await list()).map((p) => p.id)).toEqual([def.id]);
+
+    const created = await api(c, 'POST', '/api/profiles', { name: 'Тихий', copyFrom: def.id });
+    expect(created.status).toBe(201);
+    const p = (await created.json()) as Profile;
+    expect(p).toMatchObject({ name: 'Тихий', isDefault: false });
+    expect((await list()).map((x) => x.name)).toEqual(['По умолчанию', 'Тихий']);
+
+    const settings = structuredClone(p.settings);
+    settings.cut.preRollMs = 7000;
+    const upd = await api(c, 'PUT', `/api/profiles/${p.id}`, { name: 'Громкий', settings });
+    expect(upd.status).toBe(200);
+    expect(await upd.json()).toMatchObject({ id: p.id, name: 'Громкий', settings: { cut: { preRollMs: 7000 } } });
+    expect((await list()).find((x) => x.id === p.id)!.name).toBe('Громкий');
+
+    const del = await api(c, 'DELETE', `/api/profiles/${p.id}`);
+    expect(del.status).toBe(204);
+    expect((await list()).map((x) => x.id)).toEqual([def.id]);
+  });
+
+  it('answers creation errors with their status', async () => {
+    const c = await login();
+    const dup = await api(c, 'POST', '/api/profiles', { name: 'по умолчанию' });
+    expect(dup.status).toBe(409);
+    const ghost = await api(c, 'POST', '/api/profiles', { name: 'Новый', copyFrom: 'nope' });
+    expect(ghost.status).toBe(404);
+    expect(await ghost.json()).toEqual({ error: 'Профиль не найден' });
+  });
+
+  it('answers validation errors with the field path', async () => {
+    const c = await login();
+    const bad = structuredClone(def.settings);
+    bad.detector.chat.windowS = 0;
+    const r = await api(c, 'PUT', `/api/profiles/${def.id}`, { settings: bad });
+    expect(r.status).toBe(400);
+    expect(await r.json()).toEqual({ error: '«Окно подсчёта сообщений»: допустимо от 1 до 60', path: 'detector.chat.windowS' });
+  });
+
+  it('refuses to delete a profile used by a running stream', async () => {
+    const c = await login();
+    const p = profiles.create('Занятый').ok ? profiles.list().find((x) => x.name === 'Занятый')! : def;
+    registry.profileInUse.mockReturnValue(true);
+    const r = await api(c, 'DELETE', `/api/profiles/${p.id}`);
+    expect(r.status).toBe(409);
+    expect(await r.json()).toEqual({ error: 'Профиль используется идущим эфиром' });
+    expect(profiles.get(p.id)).not.toBeNull();
+  });
+
+  it('refuses to delete the default profile and unknown ids', async () => {
+    const c = await login();
+    expect((await api(c, 'DELETE', `/api/profiles/${def.id}`)).status).toBe(409);
+    expect((await api(c, 'DELETE', '/api/profiles/nope')).status).toBe(404);
+    expect((await api(c, 'PUT', '/api/profiles/nope', { name: 'x' })).status).toBe(404);
+  });
+
+  it('passes profileId to start and rejects a non-string one', async () => {
+    const c = await login();
+    const ok = await api(c, 'POST', '/api/streams', { url: 'https://twitch.tv/alice', quality: 'best', profileId: 'p2' });
+    expect(ok.status).toBe(201);
+    expect(registry.start).toHaveBeenCalledWith('https://twitch.tv/alice', 'best', 'p2');
+    const bad = await api(c, 'POST', '/api/streams', { url: 'https://twitch.tv/alice', quality: 'best', profileId: 5 });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: 'Некорректный запрос' });
+  });
+
+  it('switches the profile of a stream', async () => {
+    const c = await login();
+    const ok = await api(c, 'PUT', '/api/streams/s1/profile', { profileId: 'p2' });
+    expect(ok.status).toBe(200);
+    expect(registry.setProfile).toHaveBeenCalledWith('s1', 'p2');
+    registry.setProfile.mockReturnValueOnce({ ok: false, error: 'Эфир не найден' });
+    expect((await api(c, 'PUT', '/api/streams/zz/profile', { profileId: 'p2' })).status).toBe(404);
+    registry.setProfile.mockReturnValueOnce({ ok: false, error: 'Профиль не найден' });
+    expect((await api(c, 'PUT', '/api/streams/s1/profile', { profileId: 'zz' })).status).toBe(400);
+    expect((await api(c, 'PUT', '/api/streams/s1/profile', { profileId: 5 })).status).toBe(400);
+  });
+
+  it('serves the tuning history', async () => {
+    const c = await login();
+    const ok = await api(c, 'GET', '/api/streams/s1/tuning');
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ frames: [], entries: [] });
+    registry.tuning.mockReturnValueOnce(null);
+    const gone = await api(c, 'GET', '/api/streams/zz/tuning');
+    expect(gone.status).toBe(404);
+    expect(await gone.json()).toEqual({ error: 'Эфир не найден' });
+  });
+
+  it('includes profiles in /api/state and the probe profileId passes through', async () => {
+    const c = await login();
+    const s = (await (await api(c, 'GET', '/api/state')).json()) as { profiles: Profile[] };
+    expect(s.profiles.map((p) => p.id)).toEqual([def.id]);
+    registry.probe.mockResolvedValueOnce({ ok: true, value: { channel: 'alice', qualities: ['best'], profileId: def.id } });
+    const r = await api(c, 'POST', '/api/probe', { url: 'https://twitch.tv/alice' });
+    expect(await r.json()).toMatchObject({ profileId: def.id });
+  });
+
+  it('broadcasts profiles and tuning over SSE', async () => {
+    const c = await login();
+    const res = await fetch(`${base}/api/events`, { headers: { Cookie: c } });
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let text = '';
+    const until = async (needle: string) => {
+      while (!text.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error('stream ended: ' + text);
+        text += dec.decode(value);
+      }
+    };
+    await until(':');
+    expect((await api(c, 'PUT', `/api/profiles/${def.id}`, { name: 'Основной' })).status).toBe(200);
+    await until('event: profiles');
+    await until('"name":"Основной"');
+    registry.emit('tuning', { streamId: 's1', entry: { t: 1 } });
+    await until('event: tuning\ndata: {"streamId":"s1","entry":{"t":1}}\n\n');
+    await reader.cancel();
+  });
+
+  it('requires login for the profile routes', async () => {
+    for (const [m, p] of [['GET', '/api/profiles'], ['POST', '/api/profiles'], ['PUT', `/api/profiles/${def.id}`], ['DELETE', `/api/profiles/${def.id}`], ['PUT', '/api/streams/s1/profile'], ['GET', '/api/streams/s1/tuning']]) {
+      expect((await fetch(`${base}${p}`, { method: m })).status, `${m} ${p}`).toBe(401);
+    }
+  });
+
+  it('rejects profile writes from a foreign origin', async () => {
+    const c = await login();
+    const evil = { Origin: 'http://evil' };
+    expect((await api(c, 'POST', '/api/profiles', { name: 'x' }, evil)).status).toBe(403);
+    expect((await api(c, 'PUT', `/api/profiles/${def.id}`, { name: 'x' }, evil)).status).toBe(403);
+    expect((await api(c, 'DELETE', `/api/profiles/${def.id}`, undefined, evil)).status).toBe(403);
+    expect(profiles.list()).toHaveLength(1);
+  });
 });

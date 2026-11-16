@@ -76,7 +76,7 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
   let http: Awaited<ReturnType<typeof startHttp>>;
   try {
     http = await startHttp(
-      { registry, clips, config, webDir: opts.webDir ?? join(__dirname, '..', '..', 'out', 'web'), cuttingPaused: () => janitor.state() },
+      { registry, profiles, clips, config, webDir: opts.webDir ?? join(__dirname, '..', '..', 'out', 'web'), cuttingPaused: () => janitor.state() },
       opts.port ?? cfg.port,
       opts.host,
     );
