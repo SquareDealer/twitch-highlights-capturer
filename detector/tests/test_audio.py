@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from hl_detector.audio import AudioAnalyzer
-from hl_detector.config import DEFAULTS
+from hl_detector.config import DEFAULTS, overlay
 
 SR = 16000
 
@@ -153,3 +153,17 @@ def test_skip_to_closes_an_open_spike_at_the_gap_and_keeps_the_baseline():
     fr = a.frames()
     assert [f.t_ms for f in fr] == [30450, 30550]
     assert fr[0].warm  # baseline survived the gap
+
+
+def test_reconfigure_keeps_baseline_and_open_spike():
+    a, _ = mk()
+    a.feed(tone(-30, 60))
+    a.feed(tone(-18, 0.2))  # spike open
+    a.frames()
+    base, cur = len(a._base), dict(a._cur)
+    a.reconfigure(overlay(DEFAULTS, {"audio": {"spikeDb": 6, "blockMs": 50}})["audio"])
+    assert len(a._base) == base and a._cur == cur and a.block_ms == 100
+    assert a.c["spikeDb"] == 6
+    a.feed(tone(-18, 0.1))
+    fr = a.frames()
+    assert len(fr) == 1 and fr[0].warm and a._cur["n"] == cur["n"] + 1

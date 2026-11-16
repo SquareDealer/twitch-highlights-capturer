@@ -1,6 +1,8 @@
 import json
 
-from hl_detector.config import DEFAULTS, load_config
+import pytest
+
+from hl_detector.config import DEFAULTS, load_config, overlay, unsafe_pattern
 
 
 def test_load_config_ignores_unknown_keys(tmp_path):
@@ -30,3 +32,22 @@ def test_old_trigger_keys_are_gone_from_defaults():
     assert not old & set(DEFAULTS["chat"])
     assert "weights" not in DEFAULTS
     assert DEFAULTS["audio"]["triggerDb"] == 15  # VoiceSpike.strong still uses audio.trigger*
+
+
+def test_overlay_replaces_known_keys_only():
+    out = overlay(DEFAULTS, {"chat": {"minTriggerShare": 0.2, "nope": 1}, "weights": {}})
+    assert out["chat"]["minTriggerShare"] == 0.2 and "nope" not in out["chat"] and "weights" not in out
+    assert DEFAULTS["chat"]["minTriggerShare"] == 0.05  # base unchanged
+
+
+@pytest.mark.parametrize("bad", [None, [], {"chat": 5}, {"chat": {"windowS": "5"}}, {"chat": {"windowS": True}},
+                                 {"chat": {"windowS": float("nan")}}, {"chat": {"laughWords": [1]}},
+                                 {"chat": {"laughWords": "x"}}])
+def test_overlay_rejects_wrong_shapes(bad):
+    with pytest.raises(ValueError):
+        overlay(DEFAULTS, bad)
+
+
+def test_unsafe_pattern():
+    assert [unsafe_pattern(p) for p in ["^(a+)+$", "(ab)*", "(a){2,}", r"(.)\1"]] == [True] * 4
+    assert [unsafe_pattern(p) for p in ["^pog(gers|champ)?$", "^[ах]*ха[ах]*$", r"^\d+$"]] == [False] * 3

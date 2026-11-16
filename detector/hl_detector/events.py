@@ -73,13 +73,17 @@ def _lin(x: float, a: float, b: float, top: float) -> float:
 
 class EventAssembler:
     def __init__(self, cfg: dict, on_chat_spike: Optional[Callable[[int], None]] = None):
-        self.c = cfg["chat"]
-        self.e = cfg["events"]
-        self.s = cfg["score"]
+        self.reconfigure(cfg)
         self.on_chat_spike = on_chat_spike
         self.epoch = 0
         self.start_ms = 0
         self._reset()
+
+    def reconfigure(self, cfg: dict) -> None:
+        """New settings from the next tick on; an open event is closed and scored with them."""
+        self.c = cfg["chat"]
+        self.e = cfg["events"]
+        self.s = cfg["score"]
 
     def _reset(self) -> None:
         self._cur: Optional[_Open] = None

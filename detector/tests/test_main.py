@@ -292,3 +292,46 @@ def test_chat_time_translation_uses_the_shifted_audio_clock():
     # offset = W - 130000 -> messages land at t=132000, inside the 5 s window at 135000
     assert [s for s in sig if s["tMs"] == 131000][0]["messages"] == 0
     assert [s for s in sig if s["tMs"] == 135000][0]["messages"] == 10
+
+
+def CONFIG(v, **chat):
+    return ctl({"type": "config", "version": v, "detector": {"chat": chat}})
+
+
+def test_config_frame_is_acknowledged_and_applied_without_reset():
+    lines = run_chat(pcm_frames(speech(70)) + CONFIG(2, minTriggerMessages=5), LAUGHS,
+                     pcm_frames(speech(12)) + ctl({"type": "stop"}))
+    assert {"type": "config", "version": 2, "badPatterns": []} in lines
+    assert _events(lines) == []  # 4 messages < 5
+    assert all(l["warm"] for l in _sig(lines) if l["tMs"] >= 71000)  # warmup not reset
+
+
+def test_config_frame_before_epoch_is_used_by_the_new_chat_analyzer():
+    before = pcm_frames(speech(3)) + CONFIG(5, minActive=20) + ctl({"type": "epoch", "epoch": 1}) + pcm_frames(speech(70))
+    lines = run_chat(before, LAUGHS, pcm_frames(speech(3)) + ctl({"type": "stop"}))
+    assert {"type": "config", "version": 5, "badPatterns": []} in lines
+    sig = _sig(lines)
+    split = next(k for k in range(1, len(sig)) if sig[k]["tMs"] < sig[k - 1]["tMs"])
+    assert all(s["activeAuthors"] == 20 for s in sig[split:])  # the default minActive is 10
+    s = [s for s in sig[split:] if s["tMs"] == 72000][0]
+    assert (s["triggerMessages"], s["triggerShare"]) == (4, 0.2)
+
+
+def test_bad_patterns_are_returned():
+    lines = run(CONFIG(3, laughWords=["^([ах]+)+$", "^lol$"]) + ctl({"type": "stop"}))
+    assert {"type": "config", "version": 3, "badPatterns": ["^([ах]+)+$"]} in lines
+
+
+def test_invalid_config_frame_is_refused_and_old_values_stay():
+    lines = run_chat(pcm_frames(speech(70)) + ctl({"type": "config", "version": 4,
+                                                   "detector": {"chat": {"minTriggerMessages": "x"}}}),
+                     LAUGHS, pcm_frames(speech(12)) + ctl({"type": "stop"}))
+    ack = [l for l in lines if l["type"] == "config"][0]
+    assert ack["version"] == 4 and ack["error"] and ack["badPatterns"] == []
+    assert len(_events(lines)) == 1
+
+
+def test_config_frame_with_non_integer_version_is_refused():
+    lines = run(ctl({"type": "config", "version": "2", "detector": {}}) + ctl({"type": "stop"}))
+    ack = [l for l in lines if l["type"] == "config"][0]
+    assert ack["error"] and ack["badPatterns"] == []

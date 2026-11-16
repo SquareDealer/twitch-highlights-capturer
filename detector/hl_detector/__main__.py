@@ -11,8 +11,8 @@ import time
 from typing import Optional
 
 from .audio import AudioAnalyzer
-from .chat import ChatAnalyzer, ChatMessage
-from .config import load_config
+from .chat import ChatAnalyzer, ChatMessage, bad_patterns
+from .config import load_config, overlay
 from .events import EventAssembler
 from .irc import ChatSource, TwitchIrc
 from .protocol import FRAME_JSON, FRAME_PCM, emit, read_frames
@@ -88,12 +88,13 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
         chat_t.start()
     threading.Thread(target=_reader, args=(stdin, q), daemon=True).start()
 
+    # current settings: the file config with the last accepted `config` frame laid over it
+    conf = {"cfg": cfg, "version": None, "warm_ms": int(cfg["events"]["warmupS"]) * 1000}
     analyzer = {"chat": ChatAnalyzer(cfg)}
     audio = AudioAnalyzer(cfg["audio"], vad)
     asm = EventAssembler(cfg, on_chat_spike=lambda t: analyzer["chat"].mark_spike(t))
     # fed: stream position in bytes since the epoch's t=0 (starts at the epoch frame's startMs); start: startMs
     st = {"fed": 0, "offset": None, "last": None, "start": 0}
-    warm_ms = int(cfg["events"]["warmupS"]) * 1000
     pending = bytearray()
 
     def send_events(evs) -> None:
@@ -110,7 +111,7 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
             "messages": frame.messages, "triggerShare": round(frame.trigger_share, 3),
             "triggerMessages": frame.trigger_messages, "activeAuthors": frame.active_authors,
             "deltaDb": round(fr.delta_db, 3) if fr else 0.0,
-            "vad": round(fr.vad, 3) if fr else 0.0, "warm": t - st["start"] >= warm_ms,
+            "vad": round(fr.vad, 3) if fr else 0.0, "warm": t - st["start"] >= conf["warm_ms"],
         }, stdout)
         send_events(evs)
         for n in near:
@@ -142,9 +143,28 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
     def reset_epoch(epoch: int, start_ms: int) -> None:
         send_events(asm.set_epoch(epoch, start_ms))  # the open event of the old epoch is flushed, not lost
         audio.reset(start_ms)
-        analyzer["chat"] = ChatAnalyzer(cfg)
+        analyzer["chat"] = ChatAnalyzer(conf["cfg"])
         pending.clear()
         st.update(fed=start_ms * BYTES_PER_MS, offset=None, last=None, start=start_ms)
+
+    def apply_config(msg: dict) -> None:
+        """Lay the frame's settings over the file config and apply them without resetting any state.
+        A wrong frame is refused: the previous settings stay."""
+        version = msg.get("version")
+        try:
+            if not isinstance(version, int) or isinstance(version, bool):
+                raise ValueError("version: ожидалось целое число")
+            new = overlay(cfg, msg.get("detector"))
+        except ValueError as e:
+            log.warning("Кадр config отклонён: %s", e)
+            emit({"type": "config", "version": version, "badPatterns": [], "error": str(e)}, stdout)
+            return
+        analyzer["chat"].reconfigure(new)
+        audio.reconfigure(new["audio"])
+        asm.reconfigure(new)
+        conf.update(cfg=new, version=version, warm_ms=int(new["events"]["warmupS"]) * 1000)
+        bad = bad_patterns(new["chat"]["laughWords"]) + bad_patterns(new["chat"]["reactionWords"])
+        emit({"type": "config", "version": version, "badPatterns": bad}, stdout)
 
     def resync(t_ms: int) -> None:
         """PCM up to t_ms was dropped upstream: jump the clock over the gap (never backwards)."""
@@ -177,6 +197,8 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
                 reset_epoch(_int(msg.get("epoch")), max(0, _int(msg.get("startMs"))))
             elif t == "resync":
                 resync(_int(msg.get("tMs")))
+            elif t == "config":
+                apply_config(msg)
             elif t == "stop":
                 return False
         elif kind == "chat":

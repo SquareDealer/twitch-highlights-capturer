@@ -1,8 +1,11 @@
 """Chat features: normalization, token classes, robust per-second baseline, repeat classes."""
+import bisect
 import re
 import statistics
 from dataclasses import dataclass
 from typing import Optional
+
+from .config import unsafe_pattern
 
 _RUN = re.compile(r"(.)\1{2,}", re.DOTALL)
 _RE_CACHE: dict = {}
@@ -45,18 +48,28 @@ def _chat_cfg(cfg: dict) -> dict:
     return cfg.get("chat", cfg) if isinstance(cfg, dict) else cfg
 
 
+def _compile(w: str):
+    """The pattern compiled, or None if it does not compile or may backtrack catastrophically."""
+    if unsafe_pattern(w):
+        return None
+    try:
+        return re.compile(w.replace(r"\d", "[0-9]"), re.IGNORECASE)
+    except re.error:
+        return None
+
+
 def _compiled(words) -> list:
     key = tuple(words)
     got = _RE_CACHE.get(key)
     if got is None:
-        got = []
-        for w in key:
-            try:
-                got.append(re.compile(w.replace(r"\d", "[0-9]"), re.IGNORECASE))
-            except re.error:
-                pass
+        got = [r for r in map(_compile, key) if r is not None]
         _RE_CACHE[key] = got
     return got
+
+
+def bad_patterns(words) -> list:
+    """Patterns that are skipped: they do not compile or are unsafe. In the order of `words`."""
+    return [w for w in words if _compile(w) is None]
 
 
 def _hit(token: str, words) -> bool:
@@ -82,18 +95,46 @@ def _tokens(text: str) -> list:
 
 class ChatAnalyzer:
     def __init__(self, cfg: dict):
+        self._apply(cfg)
+        self._msgs: list = []  # (t_ms, user, norm, classes)
+        self._base: list = []  # (t_ms, messages, authors)
+        self._hist: list = []  # (t_ms, user) over max(activeWindowS, baselineS + windowS)
+        self._hist_from: Optional[int] = None  # _hist holds every message from this time on
+        self._marks: list = []
+        self._first_tick: Optional[int] = None
+
+    def _apply(self, cfg: dict) -> None:
         self.cfg = cfg
         self.c = _chat_cfg(cfg)
         ev = cfg.get("events", {}) if isinstance(cfg, dict) else {}
         self.warm_ms = int(ev.get("warmupS", 60)) * 1000
         self.win_ms = int(self.c["windowS"] * 1000)
         self.base_ms = int(self.c["baselineS"] * 1000)
-        self._msgs: list = []  # (t_ms, user, norm, classes)
-        self._base: list = []  # (t_ms, messages, authors)
-        self._active: list = []  # (t_ms, user) over activeWindowS
         self.active_ms = int(self.c["activeWindowS"] * 1000)
-        self._marks: list = []
-        self._first_tick: Optional[int] = None
+
+    def reconfigure(self, cfg: dict) -> None:
+        """New settings from the next message/tick on; nothing accumulated is dropped or reclassified."""
+        old_win = self.win_ms
+        self._apply(cfg)
+        if self.win_ms != old_win:
+            self._rebase(old_win)
+
+    def _rebase(self, old_win: int) -> None:
+        """Re-express the baseline for the new window: recount from the history where it covers the
+        whole new window, otherwise scale by new/old window length."""
+        new_win = self.win_ms
+        ratio = new_win / old_win if old_win > 0 else 1.0
+        hist = sorted(self._hist, key=lambda h: h[0])
+        times = [h[0] for h in hist]
+        out = []
+        for t, n, a in self._base:
+            lo = t - new_win
+            if self._hist_from is not None and lo >= self._hist_from:
+                win = hist[bisect.bisect_left(times, lo):bisect.bisect_right(times, t)]
+                out.append((t, len(win), len({u for _, u in win})))
+            else:
+                out.append((t, n * ratio, a * ratio))
+        self._base = out
 
     def add(self, msg: ChatMessage) -> None:
         try:
@@ -102,7 +143,7 @@ class ChatAnalyzer:
         except Exception:
             norm, classes = "", set()
         self._msgs.append((int(msg.t_ms), msg.user, norm, classes))
-        self._active.append((int(msg.t_ms), msg.user))
+        self._hist.append((int(msg.t_ms), msg.user))
 
     def mark_spike(self, t_ms: int) -> None:
         self._marks.append(int(t_ms))
@@ -154,7 +195,7 @@ class ChatAnalyzer:
             rar = arar = 0.0
 
         if self._first_tick is None:
-            self._first_tick = now_ms
+            self._first_tick = self._hist_from = now_ms
         warm = now_ms - self._first_tick >= self.warm_ms
         self._base.append((now_ms, n, a))
 
@@ -163,9 +204,11 @@ class ChatAnalyzer:
         react_only = sum(1 for m in win if "reaction" in m[3] and "laugh" not in m[3])
         trig = [m for m in win if "laugh" in m[3] or "reaction" in m[3]]
         trig_authors = len({m[1] for m in trig})
+        hcut = now_ms - max(self.active_ms, self.base_ms + self.win_ms)
+        self._hist = [x for x in self._hist if x[0] >= hcut]
+        self._hist_from = max(self._hist_from, hcut)
         acut = now_ms - self.active_ms
-        self._active = [x for x in self._active if x[0] >= acut]
-        active = max(int(self.c["minActive"]), len({u for t, u in self._active if t <= now_ms}))
+        active = max(int(self.c["minActive"]), len({u for t, u in self._hist if acut <= t <= now_ms}))
         return ChatFrame(
             t_ms=now_ms, messages=n, authors=a,
             spike=(n + alpha) / (mb + alpha), author_spike=(a + alpha) / (ab + alpha),

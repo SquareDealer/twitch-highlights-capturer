@@ -1,6 +1,6 @@
 from hl_detector.audio import VoiceSpike
 from hl_detector.chat import ChatFrame
-from hl_detector.config import DEFAULTS
+from hl_detector.config import DEFAULTS, overlay
 from hl_detector.events import EventAssembler
 
 
@@ -20,9 +20,14 @@ def quiet(t):
 
 def run(frames, spikes=(), until=140, asm=None):
     """frames: {sec: ChatFrame}; spikes delivered on the first tick >= end_ms."""
+    return run_from(0, frames, spikes, until, asm)
+
+
+def run_from(start, frames, spikes=(), until=140, asm=None):
+    """Same as run, ticking from second `start`."""
     asm = asm or EventAssembler(DEFAULTS)
     delivered, out, near = [], [], []
-    for sec in range(0, until + 1):
+    for sec in range(start, until + 1):
         now = sec * 1000
         new = [s for s in spikes if s not in delivered and s.end_ms <= now]
         delivered += new
@@ -204,3 +209,24 @@ def test_on_chat_spike_exception_is_logged(caplog):
     with caplog.at_level("WARNING", logger="hl_detector"):
         run(span(106, 110), until=108, asm=asm)
     assert any("callback failed" in r.getMessage() or "callback failed" in str(r.exc_info) for r in caplog.records)
+
+
+def test_open_event_survives_reconfigure_and_is_scored_with_new_values():
+    asm = EventAssembler(DEFAULTS)
+    frames = span(70, 75, msgs=6, authors=6, active=40, spike=4.0)  # p = 0.15
+    out, _, _ = run(frames, until=72, asm=asm)
+    assert out == [] and asm._cur is not None
+    asm.reconfigure(overlay(DEFAULTS, {"score": {"shareFull": 0.15}}))
+    out, _, _ = run_from(73, frames, until=140, asm=asm)
+    assert len(out) == 1 and out[0][1].scores["share"] == 5.0  # the old shareFull 0.3 would give 2.0
+    assert out[0][1].trigger_time_ms == 70_000
+
+
+def test_reconfigure_changes_the_trigger_from_the_next_tick():
+    asm = EventAssembler(DEFAULTS)
+    frames = span(100, 110, msgs=4, authors=4, active=100)  # p = 0.04 < 0.05
+    out, near, _ = run(frames, until=104, asm=asm)
+    assert out == [] and near and near[0].missing == ["share"]
+    asm.reconfigure(overlay(DEFAULTS, {"chat": {"minTriggerShare": 0.03}}))
+    out, _, _ = run_from(105, frames, until=140, asm=asm)
+    assert len(out) == 1 and out[0][1].trigger_time_ms == 105_000

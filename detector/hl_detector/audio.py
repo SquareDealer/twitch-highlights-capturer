@@ -45,6 +45,11 @@ class AudioAnalyzer:
         self.base_ms = int(self.c["baselineS"] * 1000)
         self._reset_state()
 
+    def reconfigure(self, cfg: dict) -> None:
+        """New thresholds from the next block on; the block size and all accumulated state stay."""
+        self.c = {**_audio_cfg(cfg), "blockMs": self.block_ms}
+        self.base_ms = int(self.c["baselineS"] * 1000)
+
     def _reset_state(self) -> None:
         self._buf = b""
         self._samples = 0  # blocks emitted * block_n

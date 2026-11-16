@@ -1,7 +1,8 @@
+import math
 import time
 
-from hl_detector.chat import ChatAnalyzer, ChatMessage, classify, normalize
-from hl_detector.config import DEFAULTS
+from hl_detector.chat import ChatAnalyzer, ChatMessage, bad_patterns, classify, normalize
+from hl_detector.config import DEFAULTS, overlay
 
 CFG = DEFAULTS
 
@@ -199,3 +200,80 @@ def test_interactive_is_not_trigger():
     f = _window(a, [(f"u{i}", "1") for i in range(10)])
     assert f.trigger_messages == 0
     assert f.trigger_share == 0.0
+
+
+def cfg_with(**chat):
+    return overlay(DEFAULTS, {"chat": chat})
+
+
+def test_reconfigure_keeps_baseline_and_warmup():
+    a = ChatAnalyzer(CFG)
+    run_base(a, 6)
+    base, first = list(a._base), a._first_tick
+    a.reconfigure(cfg_with(minTriggerShare=0.2, endSpike=3))
+    assert a._base == base and a._first_tick == first and a.tick(120_000).warm
+
+
+def test_window_change_does_not_skew_spike():
+    a = ChatAnalyzer(CFG)
+    run_base(a, 6, secs=400)  # steady chat: 6 messages per 5 s
+    before = a.tick(400_000).spike
+    a.reconfigure(cfg_with(windowS=10))
+    for s in range(401, 421):
+        if s % 5 == 0:
+            feed(a, s * 1000, 6, "привет")
+        last = a.tick(s * 1000 + 999)
+    assert 0.8 <= last.spike <= 1.25 and 0.8 <= before <= 1.25  # without the recompute it would be about 2
+
+
+def test_window_shrink_does_not_halve_spike():
+    a = ChatAnalyzer(cfg_with(windowS=10))
+    run_base(a, 6, secs=400)  # the same steady chat: 12 messages per 10 s
+    before = a.tick(400_000).spike
+    a.reconfigure(cfg_with(windowS=5))
+    for s in range(401, 421):
+        if s % 5 == 0:
+            feed(a, s * 1000, 6, "привет")
+        last = a.tick(s * 1000 + 999)
+    assert 0.8 <= last.spike <= 1.25 and 0.8 <= before <= 1.25  # without the recompute it would be about 0.5
+
+
+def test_window_change_with_empty_or_short_history():
+    a = ChatAnalyzer(CFG)
+    a.reconfigure(cfg_with(windowS=20))  # no baseline at all
+    f = a.tick(1000)
+    assert math.isfinite(f.spike) and f.spike >= 0
+    b = ChatAnalyzer(CFG)
+    for s in range(3):
+        b.add(ChatMessage(s * 1000, f"u{s}", "x"))
+        b.tick(s * 1000)
+    b.reconfigure(cfg_with(windowS=30))
+    f = b.tick(3000)
+    assert math.isfinite(f.spike) and f.spike >= 0
+
+
+def test_new_dictionary_applies_to_new_messages_only():
+    a = ChatAnalyzer(CFG)
+    a.add(ChatMessage(0, "u1", "бугага"))
+    a.reconfigure(cfg_with(laughWords=["^бугага$"]))
+    a.add(ChatMessage(100, "u2", "бугага"))
+    assert a.tick(1000).laugh_messages == 1
+
+
+def test_active_authors_follow_active_window_after_reconfigure():
+    a = ChatAnalyzer(cfg_with(minActive=1))
+    for i in range(20):  # 20 authors over 300 s
+        a.add(ChatMessage(i * 15_000, f"u{i}", "привет"))
+        a.tick(i * 15_000)
+    assert a.tick(299_000).active_authors == 20
+    a.reconfigure(cfg_with(minActive=1, activeWindowS=30))
+    assert a.tick(300_000).active_authors == 2  # only u18 (270 s) and u19 (285 s) wrote in the last 30 s
+
+
+def test_unsafe_pattern_is_never_run_and_is_reported():
+    words = ["^([ах]+)+$", "((", "^lol$"]
+    assert bad_patterns(words) == ["^([ах]+)+$", "(("]
+    a = ChatAnalyzer(cfg_with(laughWords=words))
+    t0 = time.time()
+    a.add(ChatMessage(0, "u", "ахахахахахахахахахахахахахахахахахахах!"))
+    assert time.time() - t0 < 0.5

@@ -1,6 +1,10 @@
 """Detector configuration: defaults mirror src/service/config.ts defaultConfig().detector."""
 import copy
 import json
+import math
+import re
+
+_UNSAFE = re.compile(r"\)[*+{]|\\[1-9]")
 
 DEFAULTS: dict = {
     "chat": {
@@ -43,3 +47,39 @@ def load_config(path: str) -> dict:
         raw = json.load(f)
     over = raw.get("detector", {}) if isinstance(raw, dict) else {}
     return _merge(DEFAULTS, over if isinstance(over, dict) else {})
+
+
+def unsafe_pattern(p: str) -> bool:
+    """A quantified group or a backreference: may backtrack catastrophically, never run."""
+    return _UNSAFE.search(p) is not None
+
+
+def _number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def overlay(base: dict, detector) -> dict:
+    """`base` with the `detector` sections laid over it; keys absent from `base` are ignored.
+
+    Raises ValueError when the shape is wrong: `detector` or a section is not a dict, a number is not
+    a finite int/float (bool is not a number), a list is not a list of strings."""
+    if not isinstance(detector, dict):
+        raise ValueError("detector: ожидался объект")
+    out = copy.deepcopy(base)
+    for name, section in detector.items():
+        if name not in base:
+            continue
+        if not isinstance(section, dict):
+            raise ValueError(f"{name}: ожидался объект")
+        for key, v in section.items():
+            if key not in base[name]:
+                continue
+            if isinstance(base[name][key], list):
+                if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                    raise ValueError(f"{name}.{key}: ожидался список строк")
+                out[name][key] = list(v)
+            elif _number(v):
+                out[name][key] = v
+            else:
+                raise ValueError(f"{name}.{key}: ожидалось конечное число")
+    return out
