@@ -4,7 +4,10 @@ import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DetectorProcess, type DetectorProcessOptions } from '../../src/service/detectorProcess';
+import { settingsFromConfig } from '../../src/service/profileSettings';
+import { defaultConfig } from '../../src/service/config';
 
+const D1 = settingsFromConfig(defaultConfig('/d')).detector;
 const FAKE = resolve(__dirname, 'fixtures', 'fakeDetector.mjs');
 const procs: DetectorProcess[] = [];
 
@@ -264,5 +267,90 @@ describe('DetectorProcess', () => {
     dp.attachPcm(new PassThrough(), 1);
     await new Promise((r) => setTimeout(r, 300));
     expect(dp.health().running).toBe(false);
+  });
+
+  it('sends the config before the epoch and reports the acknowledgement', async () => {
+    const { dp, lines } = make();
+    expect(dp.setConfig(D1)).toBe(1);
+    const acks: unknown[] = [];
+    dp.on('config', (s) => acks.push(s));
+    dp.start();
+    dp.attachPcm(new PassThrough(), 7);
+    await until(() => lines().length >= 2);
+    expect(JSON.parse(lines()[0]!.slice(2))).toEqual({ type: 'config', version: 1, detector: D1 });
+    expect(lines()[1]).toBe('1 {"type":"epoch","epoch":7,"startMs":0}');
+    await until(() => dp.configState().applied === 1);
+    expect(acks.at(-1)).toEqual({ sent: 1, applied: 1, badPatterns: [] });
+  });
+
+  it('sends a changed config to the running process at once', async () => {
+    const { dp, lines } = make();
+    dp.setConfig(D1);
+    dp.start();
+    dp.attachPcm(new PassThrough(), 4);
+    await until(() => dp.configState().applied === 1);
+    const D2 = { ...D1, chat: { ...D1.chat, minTriggerShare: 0.2 } };
+    expect(dp.setConfig(D2)).toBe(2);
+    await until(() => dp.configState().applied === 2);
+    const frames = lines().filter((l) => l.startsWith('1 ')).map((l) => JSON.parse(l.slice(2)));
+    expect(frames.map((f) => f.type)).toEqual(['config', 'epoch', 'config']);
+    expect(frames[2]).toEqual({ type: 'config', version: 2, detector: D2 });
+  });
+
+  it('re-sends the latest config, not the first one, after a crash', async () => {
+    const { dp, lines } = make(['--crash-after', '3']);
+    dp.setConfig(D1);
+    dp.start();
+    dp.attachPcm(new PassThrough(), 1);
+    await until(() => dp.health().running);
+    const D2 = { ...D1, chat: { ...D1.chat, minTriggerShare: 0.2 } };
+    dp.setConfig(D2);
+    await until(() => dp.health().restarts >= 1 && dp.health().running);
+    await until(() => lines().filter((l) => l.includes('"type":"config"')).length >= 3);
+    const frames = lines().filter((l) => l.startsWith('1 ')).map((l) => JSON.parse(l.slice(2)));
+    const afterRestart = frames.slice(frames.findLastIndex((f) => f.type === 'config'));
+    expect(afterRestart[0]).toEqual({ type: 'config', version: 2, detector: D2 });
+    expect(afterRestart[1]?.type).toBe('epoch');
+  });
+
+  it('never sends a config frame when setConfig was not called', async () => {
+    const { dp, lines } = make();
+    dp.start();
+    dp.attachPcm(new PassThrough(), 1);
+    await until(() => lines().length >= 1);
+    expect(lines().some((l) => l.includes('"type":"config"'))).toBe(false);
+    expect(dp.configState()).toEqual({ sent: 0, applied: 0, badPatterns: [] });
+  });
+
+  it('reports patterns the detector could not use', async () => {
+    const { dp } = make(['--bad-pattern', '((']);
+    dp.setConfig(D1);
+    dp.start();
+    await until(() => dp.configState().applied === 1);
+    expect(dp.configState().badPatterns).toEqual(['((']);
+  });
+
+  it('reports a refused config with its error', async () => {
+    const { dp } = make(['--config-error', 'bad value']);
+    const acks: unknown[] = [];
+    dp.on('config', (s) => acks.push(s));
+    dp.setConfig(D1);
+    dp.start();
+    await until(() => dp.configState().applied === 1);
+    const expected = { sent: 1, applied: 1, badPatterns: [], error: 'bad value' };
+    expect(dp.configState()).toEqual(expected);
+    expect(acks.at(-1)).toEqual(expected);
+  });
+
+  it('passes detail through on signals lines', async () => {
+    const { dp } = make(['--signals-detail']);
+    const signals: any[] = [];
+    dp.on('signals', (s) => signals.push(s));
+    dp.start();
+    await until(() => signals.some((s) => s.detail));
+    const detail = signals.find((s) => s.detail).detail;
+    expect(detail.configVersion).toBe(0);
+    expect(detail.chat.triggerShare).toBe(1);
+    expect(detail.event).toBeNull();
   });
 });

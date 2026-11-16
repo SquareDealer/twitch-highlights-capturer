@@ -7,6 +7,9 @@
 //   --chat <state>      print a status line with this chat state at startup
 //   --event             print an event line when an epoch frame arrives
 //   --event-on-stop     print an event line (without a trailing newline) when the stop frame arrives, then exit
+//   --bad-pattern <p>   answer a config frame with badPatterns: [<p>]
+//   --config-error <t>  answer a config frame with an error line (config refused)
+//   --signals-detail    print one signals line carrying a detail object at startup
 //   --fail <text>       print <text> to stderr and exit(3) at startup
 import { appendFileSync } from 'node:fs';
 
@@ -29,6 +32,8 @@ if (!has('--no-heartbeat')) {
 }
 if (opt('--chat')) out({ type: 'status', chat: opt('--chat') });
 process.stdout.write('this is not json\n');
+const DETAIL = { configVersion: 0, sinceStartMs: 1, chat: { messages: 1, authors: 1, baseline: 0.5, spike: 2, triggerMessages: 1, triggerAuthors: 1, laughMessages: 1, reactionMessages: 0, activeAuthors: 1, activeAuthorsRaw: 1, triggerShare: 1 }, conditions: { warm: true, messages: true, authors: true, share: true, fired: false }, audio: { db: -30, baselineDb: -40, deltaDb: 10, vad: 0.5, warm: true, spiking: false }, score: { total: 1, share: 0, speed: 0, audio: 0 }, event: null };
+if (has('--signals-detail')) out({ type: 'signals', tMs: 0, chatSpike: 0, laughShare: 0, messages: 0, deltaDb: 0, vad: 0, warm: false, detail: DETAIL });
 
 let buf = Buffer.alloc(0);
 let frames = 0;
@@ -47,6 +52,9 @@ process.stdin.on('data', (d) => {
     if (kind === 1) {
       tag = body.toString('utf8');
       const msg = JSON.parse(tag);
+      if (msg.type === 'config') {
+        out({ type: 'config', version: msg.version, badPatterns: opt('--bad-pattern') !== undefined ? [opt('--bad-pattern')] : [], ...(opt('--config-error') !== undefined ? { error: opt('--config-error') } : {}) });
+      }
       if (msg.type === 'epoch') {
         out({ type: 'signals', tMs: 0, chatSpike: 0, laughShare: 0, messages: pcmBytes, deltaDb: 0, vad: 0, warm: false });
         if (has('--event')) {

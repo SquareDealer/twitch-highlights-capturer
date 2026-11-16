@@ -3,6 +3,31 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import type { DetectorEvent } from './types';
+import type { ProfileSettings } from './profileSettings';
+
+export interface DetectorDetail {
+  configVersion: number;
+  sinceStartMs: number;
+  chat: {
+    messages: number; authors: number; baseline: number; spike: number; triggerMessages: number; triggerAuthors: number;
+    laughMessages: number; reactionMessages: number; activeAuthors: number; activeAuthorsRaw: number; triggerShare: number;
+  };
+  conditions: { warm: boolean; messages: boolean; authors: boolean; share: boolean; fired: boolean };
+  audio: { db: number; baselineDb: number; deltaDb: number; vad: number; warm: boolean; spiking: boolean };
+  score: { total: number; share: number; speed: number; audio: number };
+  event: {
+    startMs: number; durationMs: number; chatOpen: boolean; lowConfidence: boolean;
+    score: { total: number; share: number; speed: number; audio: number };
+  } | null;
+}
+
+/** Config versions: 0 means none yet. */
+export interface DetectorConfigState {
+  sent: number;
+  applied: number;
+  badPatterns: string[];
+  error?: string;
+}
 
 export interface DetectorSignals {
   tMs: number;
@@ -15,6 +40,7 @@ export interface DetectorSignals {
   deltaDb: number;
   vad: number;
   warm: boolean;
+  detail?: DetectorDetail;
 }
 
 export interface DetectorHealth {
@@ -92,6 +118,8 @@ export class DetectorProcess extends EventEmitter {
   private lastError: string | undefined;
   private generation = 0; // bumped on every launch: output of a replaced process is ignored
   private lastLogged: { text: string; at: number } | null = null;
+  private config: { version: number; detector: ProfileSettings['detector'] } | null = null;
+  private applied: Omit<DetectorConfigState, 'sent'> = { applied: 0, badPatterns: [] };
 
   constructor(private readonly opts: DetectorProcessOptions) {
     super();
@@ -113,6 +141,18 @@ export class DetectorProcess extends EventEmitter {
       running: this.running, chat: this.chat, restarts: this.restarts,
       ...(this.lastError !== undefined ? { lastError: this.lastError } : {}),
     };
+  }
+
+  /** Stores the settings and sends them now if the process runs. Returns the new version (1, 2, …). */
+  setConfig(detector: ProfileSettings['detector']): number {
+    const version = (this.config?.version ?? 0) + 1;
+    this.config = { version, detector };
+    this.sendConfig();
+    return version;
+  }
+
+  configState(): DetectorConfigState {
+    return { sent: this.config?.version ?? 0, ...this.applied };
   }
 
   lastStderr(): string[] {
@@ -223,6 +263,7 @@ export class DetectorProcess extends EventEmitter {
     if (child.pid === undefined) return; // spawn failure: 'error' follows
     this.setRunning(true);
     this.armHeartbeat(child);
+    this.sendConfig();
     this.announceEpoch();
   }
 
@@ -273,6 +314,14 @@ export class DetectorProcess extends EventEmitter {
       case 'signals':
         this.emit('signals', rest as DetectorSignals);
         break;
+      case 'config': {
+        if (typeof rest.version !== 'number' || rest.version < (this.config?.version ?? 0)) break;
+        const error = typeof rest.error === 'string' ? rest.error : undefined;
+        const bad = !error && Array.isArray(rest.badPatterns) ? rest.badPatterns.filter((p: unknown) => typeof p === 'string') : [];
+        this.applied = { applied: rest.version, badPatterns: bad, ...(error !== undefined ? { error } : {}) };
+        this.emit('config', this.configState());
+        break;
+      }
       case 'nearmiss':
         this.emit('nearmiss', rest);
         break;
@@ -314,6 +363,11 @@ export class DetectorProcess extends EventEmitter {
     this.writeRaw(jsonFrame({ type: 'epoch', epoch: this.epoch, startMs: Math.floor(this.epochBytes / PCM_BYTES_PER_MS) }));
     this.gap = false;
     this.realign = true;
+  }
+
+  private sendConfig(): void {
+    if (!this.config || !this.running) return;
+    this.writeRaw(jsonFrame({ type: 'config', version: this.config.version, detector: this.config.detector }));
   }
 
   private writeRaw(buf: Buffer): boolean {
