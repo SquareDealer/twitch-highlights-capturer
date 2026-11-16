@@ -1,3 +1,4 @@
+import pytest
 import io
 import json
 import math
@@ -358,6 +359,16 @@ def test_absurd_config_value_is_refused_and_detector_keeps_running():
     lines = run_chat(pcm_frames(speech(70)) + CONFIG(5, windowS=1e306), LAUGHS,
                      pcm_frames(speech(12)) + ctl({"type": "stop"}))
     ack = [l for l in lines if l["type"] == "config" and l["version"] == 5][0]
+    assert ack["error"] and ack["badPatterns"] == []
+    assert len(_events(lines)) == 1
+    assert any(l["tMs"] > 71000 for l in _sig(lines))
+
+
+@pytest.mark.parametrize("key", ["warmupS", "lookbackS", "chatLagS", "voiceWindowS", "mergeGapS", "maxEventS"])
+def test_absurd_events_value_is_refused_and_detector_keeps_running(key):
+    frame = ctl({"type": "config", "version": 6, "detector": {"events": {key: 1e306}}})
+    lines = run_chat(pcm_frames(speech(70)) + frame, LAUGHS, pcm_frames(speech(12)) + ctl({"type": "stop"}))
+    ack = [l for l in lines if l["type"] == "config" and l["version"] == 6][0]
     assert ack["error"] and ack["badPatterns"] == []
     assert len(_events(lines)) == 1
     assert any(l["tMs"] > 71000 for l in _sig(lines))

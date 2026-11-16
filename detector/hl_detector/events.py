@@ -81,8 +81,11 @@ class EventAssembler:
 
     def reconfigure(self, cfg: dict) -> None:
         """New settings from the next tick on; an open event is closed and scored with them."""
+        e = cfg["events"]
+        for k in ("warmupS", "lookbackS", "chatLagS", "voiceWindowS", "mergeGapS", "maxEventS"):
+            int(e[k] * 1000)  # tick time converts these: refuse values that cannot be, assigning nothing
         self.c = cfg["chat"]
-        self.e = cfg["events"]
+        self.e = e
         self.s = cfg["score"]
 
     def _reset(self) -> None:
