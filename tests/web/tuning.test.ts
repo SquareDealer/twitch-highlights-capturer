@@ -75,3 +75,15 @@ it('remembers the switch and survives a blocked localStorage', () => {
   expect(() => storeTuning('a', true)).not.toThrow();
   vi.unstubAllGlobals();
 });
+it('orders frames by epoch first, so frames after a reconnect stay last', () => {
+  const f = (epoch: number, tMs: number): DetectorSignals => ({ epoch, tMs, chatSpike: 0, laughShare: 0, messages: 0, deltaDb: 0, vad: 0, warm: true });
+  const old = Array.from({ length: 11 }, (_, i) => f(1, 290000 + i * 1000));
+  const fresh = Array.from({ length: 5 }, (_, i) => f(2, 1000 + i * 1000));
+  const m = mergeFrames(old, fresh);
+  expect(m).toHaveLength(16);
+  expect(m.slice(-5).map((x) => [x.epoch, x.tMs])).toEqual([[2, 1000], [2, 2000], [2, 3000], [2, 4000], [2, 5000]]);
+  const full = mergeFrames(Array.from({ length: 300 }, (_, i) => f(1, i * 1000)), fresh);
+  expect(full).toHaveLength(300);
+  expect(full[299]).toEqual(f(2, 5000));
+  expect(mergeFrames([f(1, 1000)], [f(2, 1000)])).toHaveLength(2); // same tMs, different epochs
+});

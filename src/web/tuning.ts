@@ -90,10 +90,11 @@ export function entryText(e: TuningEntry): string {
   }
 }
 
+/** Keyed and ordered by (epoch, tMs): tMs restarts from 0 in every new epoch (a Twitch reconnect). */
 export function mergeFrames(a: DetectorSignals[], b: DetectorSignals[]): DetectorSignals[] {
-  const byTime = new Map<number, DetectorSignals>();
-  for (const f of [...a, ...b]) byTime.set(f.tMs, f);
-  return [...byTime.values()].sort((x, y) => x.tMs - y.tMs).slice(-300);
+  const byTime = new Map<string, DetectorSignals>();
+  for (const f of [...a, ...b]) byTime.set(`${f.epoch ?? 0}:${f.tMs}`, f);
+  return [...byTime.values()].sort((x, y) => (x.epoch ?? 0) - (y.epoch ?? 0) || x.tMs - y.tMs).slice(-300);
 }
 
 const storageKey = (channel: string) => `hl.tuning.${channel}`;

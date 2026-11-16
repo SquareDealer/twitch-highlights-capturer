@@ -30,6 +30,8 @@ export interface DetectorConfigState {
 }
 
 export interface DetectorSignals {
+  /** The detector's epoch; tMs restarts from 0 in each. */
+  epoch?: number;
   tMs: number;
   chatSpike: number;
   triggerShare?: number;
