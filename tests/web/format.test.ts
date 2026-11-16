@@ -18,7 +18,12 @@ test('duration', () => {
 });
 test('triggerLabel', () => {
   expect(triggerLabel('laugh')).toBe('смех');
-  expect(triggerLabel('mass')).toBe('массовая реакция');
+  expect(triggerLabel('mass')).toBe('реакция');
+  expect(triggerLabel('reaction')).toBe('реакция');
   expect(triggerLabel('audio')).toBe('звук');
   expect(triggerLabel('manual')).toBe('вручную');
+});
+test('clipSummary shows trigger share of active chatters when present', () => {
+  expect(clipSummary(sig({ chatSpike: 4, triggerShare: 0.1, triggerMessages: 6, activeAuthors: 40, laughShare: 0.5, deltaDb: 15 })))
+    .toBe('чат ×4 · реакция 10 % активных · звук +15 дБ');
 });

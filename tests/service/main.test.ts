@@ -91,7 +91,7 @@ function feed(epochDir: string, seq: number) {
 
 const event = (over: Partial<DetectorEvent> = {}): DetectorEvent => ({
   epoch: 0, startMs: 0, endMs: 2000, triggerTimeMs: 1000, estimatedEventMs: 1000, uncertaintyMs: 0,
-  triggers: ['laugh'], confidence: 'normal', scores: { S: 0.7, C: 0.5, E: 0.5, U: 0.5, A: 0.5 },
+  triggers: ['laugh'], confidence: 'normal', scores: { total: 0.7, share: 0, speed: 0, audio: 0 },
   signals: { chatSpike: 4, laughShare: 0.5, reactionShare: 0.1, deltaDb: 3 }, ...over,
 });
 

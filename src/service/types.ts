@@ -1,4 +1,4 @@
-export type Trigger = 'laugh' | 'mass' | 'audio' | 'manual';
+export type Trigger = 'laugh' | 'reaction' | 'audio' | 'manual' | 'mass'; // 'mass' only on old records
 export type ClipStatus = 'pending' | 'new' | 'taken' | 'rejected' | 'error';
 
 export interface DetectorEvent {
@@ -10,8 +10,14 @@ export interface DetectorEvent {
   uncertaintyMs: number;
   triggers: Trigger[];
   confidence: 'normal' | 'low';
-  scores: { S: number; C: number; E: number; U: number; A: number };
-  signals: { chatSpike: number; laughShare: number; reactionShare: number; deltaDb: number };
+  scores: { total: number; share: number; speed: number; audio: number };
+  signals: {
+    chatSpike: number;
+    /** Absent on clips recorded before the relative chat trigger. */
+    triggerShare?: number;
+    triggerMessages?: number;
+    activeAuthors?: number;
+    laughShare: number; reactionShare: number; deltaDb: number };
 }
 
 export interface FeedClip {

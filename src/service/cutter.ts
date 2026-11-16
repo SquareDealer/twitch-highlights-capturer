@@ -106,7 +106,7 @@ export class Cutter extends EventEmitter {
       const from = Math.max(0, to - cfg.manualClipMs);
       const ev: DetectorEvent = {
         epoch, startMs: from, endMs: to, triggerTimeMs: to, estimatedEventMs: to, uncertaintyMs: 0,
-        triggers: ['manual'], confidence: 'normal', scores: { S: 0, C: 0, E: 0, U: 0, A: 0 },
+        triggers: ['manual'], confidence: 'normal', scores: { total: 0, share: 0, speed: 0, audio: 0 },
         signals: { chatSpike: 0, laughShare: 0, reactionShare: 0, deltaDb: 0 },
       };
       const clip = await this.cut(ev, from, to, false);
@@ -166,7 +166,7 @@ export class Cutter extends EventEmitter {
     const sessionId = this.deps.session().id;
     const since = new Date(this.now().getTime() - HOUR_MS).toISOString();
     if (this.deps.clips.countSince(sessionId, since) < cfg.maxClipsPerHour) return false;
-    return ev.scores.S <= median(this.deps.clips.scoresSince(sessionId, since));
+    return ev.scores.total <= median(this.deps.clips.scoresSince(sessionId, since));
   }
 
   private emitClip(id: string): FeedClip {
@@ -185,7 +185,7 @@ export class Cutter extends EventEmitter {
     const base: FeedClip = {
       id, sessionId: session.id, streamer: session.streamer, streamId: session.streamId, epoch: ev.epoch,
       startMs: from, endMs: to, durationMs: to - from, bytes: 0, triggers: ev.triggers, confidence: ev.confidence,
-      score: ev.scores.S, signals: ev.signals, status: 'pending', error: null, mp4Path: paths.mp4Path,
+      score: ev.scores.total, signals: ev.signals, status: 'pending', error: null, mp4Path: paths.mp4Path,
       jsonPath: paths.jsonPath, fileDeleted: false, createdAt: createdAt.toISOString(), statusChangedAt: null,
     };
     clips.insert(base);

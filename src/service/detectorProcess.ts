@@ -7,6 +7,9 @@ import type { DetectorEvent } from './types';
 export interface DetectorSignals {
   tMs: number;
   chatSpike: number;
+  triggerShare?: number;
+  triggerMessages?: number;
+  activeAuthors?: number;
   laughShare: number;
   messages: number;
   deltaDb: number;

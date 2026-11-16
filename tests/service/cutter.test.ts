@@ -35,7 +35,7 @@ const fill = (epoch: number, from: number, to: number) => {
 
 const event = (over: Partial<DetectorEvent> = {}): DetectorEvent => ({
   epoch: 1, startMs: 100_000, endMs: 110_000, triggerTimeMs: 105_000, estimatedEventMs: 102_000, uncertaintyMs: 1000,
-  triggers: ['laugh'], confidence: 'normal', scores: { S: 0.7, C: 0.5, E: 0.5, U: 0.5, A: 0.5 },
+  triggers: ['laugh'], confidence: 'normal', scores: { total: 7.5, share: 0, speed: 0, audio: 0 },
   signals: { chatSpike: 4, laughShare: 0.5, reactionShare: 0.1, deltaDb: 3 }, ...over,
 });
 
@@ -104,7 +104,7 @@ test('cuts [start−15s, end+10s] after the tail segments arrive', async () => {
   const c = only();
   expect(c.status).toBe('new');
   // the requested range starts at 85 s, mid-segment: the clip describes the footage actually cut (84–120 s)
-  expect([c.startMs, c.endMs, c.durationMs, c.score]).toEqual([84_000, 120_000, 36_000, 0.7]);
+  expect([c.startMs, c.endMs, c.durationMs, c.score]).toEqual([84_000, 120_000, 36_000, 7.5]);
   const j = JSON.parse(readFileSync(c.jsonPath, 'utf8'));
   expect([j.startMs, j.endMs, j.durationMs]).toEqual([84_000, 120_000, 36_000]);
   expect(existsSync(c.mp4Path)).toBe(true);
@@ -139,7 +139,7 @@ test('writes clip.json next to the mp4 with event fields and configVersion', asy
   const c = only();
   expect(c.jsonPath.replace(/\.json$/, '')).toBe(c.mp4Path.replace(/\.mp4$/, ''));
   const j = JSON.parse(readFileSync(c.jsonPath, 'utf8'));
-  expect(j).toMatchObject({ id: c.id, status: 'new', triggers: ['laugh'], score: 0.7, signals: ev.signals, event: ev });
+  expect(j).toMatchObject({ id: c.id, status: 'new', triggers: ['laugh'], score: 7.5, signals: ev.signals, event: ev });
   expect(j.configVersion).toBe(createHash('sha1').update(JSON.stringify(cfg.detector)).digest('hex'));
 });
 
@@ -194,10 +194,10 @@ test('manual clips do not count toward the hourly limiter', async () => {
   fill(1, 0, 70);
   cfg.maxClipsPerHour = 2;
   for (let i = 0; i < 5; i++) expect((await cutter.manual()).ok).toBe(true);
-  await cutter.onEvent(event({ scores: { S: 0.1, C: 0, E: 0, U: 0, A: 0 } }));
-  await cutter.onEvent(event({ scores: { S: 0.2, C: 0, E: 0, U: 0, A: 0 } }));
+  await cutter.onEvent(event({ scores: { total: 0.1, share: 0, speed: 0, audio: 0 } }));
+  await cutter.onEvent(event({ scores: { total: 0.2, share: 0, speed: 0, audio: 0 } }));
   expect(clips.list().filter((c) => c.triggers[0] === 'laugh')).toHaveLength(2);
-  await cutter.onEvent(event({ scores: { S: 0.05, C: 0, E: 0, U: 0, A: 0 } })); // over limit, below median
+  await cutter.onEvent(event({ scores: { total: 0.05, share: 0, speed: 0, audio: 0 } })); // over limit, below median
   expect(clips.list()).toHaveLength(7);
 });
 
@@ -228,12 +228,12 @@ test('drops events over the hourly limit unless the score beats the median', asy
   fill(1, 0, 70);
   cfg.maxClipsPerHour = 3;
   for (const s of [0.2, 0.5, 0.9]) {
-    await cutter.onEvent(event({ scores: { S: s, C: 0, E: 0, U: 0, A: 0 } }));
+    await cutter.onEvent(event({ scores: { total: s, share: 0, speed: 0, audio: 0 } }));
   }
   expect(clips.list()).toHaveLength(3);
-  await cutter.onEvent(event({ scores: { S: 0.5, C: 0, E: 0, U: 0, A: 0 } })); // == median
+  await cutter.onEvent(event({ scores: { total: 0.5, share: 0, speed: 0, audio: 0 } })); // == median
   expect(clips.list()).toHaveLength(3);
-  await cutter.onEvent(event({ scores: { S: 0.6, C: 0, E: 0, U: 0, A: 0 } })); // > median
+  await cutter.onEvent(event({ scores: { total: 0.6, share: 0, speed: 0, audio: 0 } })); // > median
   expect(clips.list()).toHaveLength(4);
   const m = await cutter.manual();
   expect(m.ok).toBe(true);
@@ -357,4 +357,10 @@ test.skipIf(!hasFfmpeg)('produces a playable mp4 from real ts segments without r
     String(spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', f]).stdout).trim();
   expect(codec(c.mp4Path)).toBe('h264');
   expect(Math.abs(probeDurationSec(c.mp4Path) - 8)).toBeLessThanOrEqual(2.5);
+});
+
+test('passes scores.total to the feed row', async () => {
+  fill(1, 0, 70);
+  await cutter.onEvent(event({ scores: { total: 7.5, share: 3, speed: 2, audio: 1 } }));
+  expect(only().score).toBe(7.5);
 });

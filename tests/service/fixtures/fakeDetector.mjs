@@ -16,7 +16,7 @@ const has = (name) => argv.includes(name);
 const logFile = opt('--log');
 const crashAfter = opt('--crash-after') ? Number(opt('--crash-after')) : Infinity;
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
-const EVENT = { type: 'event', startMs: 1, endMs: 2, triggerTimeMs: 1, estimatedEventMs: 1, uncertaintyMs: 0, triggers: ['laugh'], confidence: 'normal', scores: { S: 1, C: 1, E: 1, U: 1, A: 1 }, signals: { chatSpike: 1, laughShare: 1, reactionShare: 0, deltaDb: 0 } };
+const EVENT = { type: 'event', startMs: 1, endMs: 2, triggerTimeMs: 1, estimatedEventMs: 1, uncertaintyMs: 0, triggers: ['laugh'], confidence: 'normal', scores: { total: 1, share: 0, speed: 0, audio: 0 }, signals: { chatSpike: 1, laughShare: 1, reactionShare: 0, deltaDb: 0 } };
 
 if (opt('--fail')) {
   process.stderr.write(`Traceback (most recent call last):\n${opt('--fail')}\n`, () => process.exit(3));
@@ -50,7 +50,7 @@ process.stdin.on('data', (d) => {
       if (msg.type === 'epoch') {
         out({ type: 'signals', tMs: 0, chatSpike: 0, laughShare: 0, messages: pcmBytes, deltaDb: 0, vad: 0, warm: false });
         if (has('--event')) {
-          out({ type: 'event', epoch: msg.epoch, startMs: 1, endMs: 2, triggerTimeMs: 1, estimatedEventMs: 1, uncertaintyMs: 0, triggers: ['laugh'], confidence: 'normal', scores: { S: 1, C: 1, E: 1, U: 1, A: 1 }, signals: { chatSpike: 1, laughShare: 1, reactionShare: 0, deltaDb: 0 } });
+          out({ type: 'event', epoch: msg.epoch, startMs: 1, endMs: 2, triggerTimeMs: 1, estimatedEventMs: 1, uncertaintyMs: 0, triggers: ['laugh'], confidence: 'normal', scores: { total: 1, share: 0, speed: 0, audio: 0 }, signals: { chatSpike: 1, laughShare: 1, reactionShare: 0, deltaDb: 0 } });
           out({ type: 'nearmiss', tMs: 5, kind: 'x', missing: [], values: {} });
         }
       }
