@@ -335,3 +335,29 @@ def test_config_frame_with_non_integer_version_is_refused():
     lines = run(ctl({"type": "config", "version": "2", "detector": {}}) + ctl({"type": "stop"}))
     ack = [l for l in lines if l["type"] == "config"][0]
     assert ack["error"] and ack["badPatterns"] == []
+
+
+def test_signals_line_carries_detail():
+    lines = run_chat(pcm_frames(speech(70)) + CONFIG(7), LAUGHS, pcm_frames(speech(3)) + ctl({"type": "stop"}))
+    d = [l for l in lines if l["type"] == "signals" and l["tMs"] == 72000][0]["detail"]
+    assert d["configVersion"] == 7 and d["sinceStartMs"] == 72000
+    assert (d["chat"]["triggerMessages"], d["chat"]["triggerAuthors"], d["chat"]["activeAuthors"], d["chat"]["activeAuthorsRaw"]) == (4, 4, 10, 4)
+    assert d["conditions"] == {"warm": True, "messages": True, "authors": True, "share": True, "fired": True}
+    assert d["event"]["chatOpen"] is True and d["score"]["total"] >= 1
+    assert set(d["audio"]) == {"db", "baselineDb", "deltaDb", "vad", "warm", "spiking"}
+
+
+def test_detail_is_present_before_any_audio_or_config():
+    lines = run(pcm_frames(speech(1)) + ctl({"type": "stop"}))
+    d = _sig(lines)[0]["detail"]
+    assert d["configVersion"] == 0 and d["event"] is None and d["sinceStartMs"] == _sig(lines)[0]["tMs"]
+    assert d["audio"]["warm"] is False and d["audio"]["spiking"] is False
+
+
+def test_absurd_config_value_is_refused_and_detector_keeps_running():
+    lines = run_chat(pcm_frames(speech(70)) + CONFIG(5, windowS=1e306), LAUGHS,
+                     pcm_frames(speech(12)) + ctl({"type": "stop"}))
+    ack = [l for l in lines if l["type"] == "config" and l["version"] == 5][0]
+    assert ack["error"] and ack["badPatterns"] == []
+    assert len(_events(lines)) == 1
+    assert any(l["tMs"] > 71000 for l in _sig(lines))

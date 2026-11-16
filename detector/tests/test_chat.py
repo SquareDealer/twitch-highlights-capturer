@@ -277,3 +277,8 @@ def test_unsafe_pattern_is_never_run_and_is_reported():
     t0 = time.time()
     a.add(ChatMessage(0, "u", "ахахахахахахахахахахахахахахахахахахах!"))
     assert time.time() - t0 < 0.5
+
+
+def test_frame_reports_baseline_and_raw_active():
+    a = ChatAnalyzer(CFG); run_base(a, 6); f = a.tick(120_000)
+    assert 5 <= f.baseline <= 7 and f.active_authors_raw == 6 and f.active_authors == 10

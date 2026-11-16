@@ -167,3 +167,14 @@ def test_reconfigure_keeps_baseline_and_open_spike():
     a.feed(tone(-18, 0.1))
     fr = a.frames()
     assert len(fr) == 1 and fr[0].warm and a._cur["n"] == cur["n"] + 1
+
+
+def test_frame_reports_baseline_db_and_spiking():
+    a, _ = mk()
+    a.feed(tone(-40, 60))
+    fr = a.frames()
+    assert abs(fr[-1].base_db - (-40)) <= 1 and fr[0].base_db == fr[0].db and not a.spiking
+    a.feed(tone(-24, 0.5))
+    assert a.spiking and abs(a.frames()[-1].base_db - (-40)) <= 1
+    a.feed(tone(-40, 0.3))
+    assert not a.spiking

@@ -28,6 +28,11 @@ DEFAULTS: dict = {
 }
 
 
+# values that would only fail later, at tick time
+_POSITIVE = (("chat", "windowS"), ("chat", "baselineS"), ("chat", "activeWindowS"), ("chat", "alpha"),
+             ("audio", "baselineS"))
+
+
 def _merge(base: dict, over: dict) -> dict:
     """Merge `over` onto `base`, ignoring keys absent from `base` (stale user config)."""
     out = copy.deepcopy(base)
@@ -82,4 +87,7 @@ def overlay(base: dict, detector) -> dict:
                 out[name][key] = v
             else:
                 raise ValueError(f"{name}.{key}: ожидалось конечное число")
+    for name, key in _POSITIVE:
+        if out[name][key] <= 0:
+            raise ValueError(f"{name}.{key}: ожидалось число больше нуля")
     return out

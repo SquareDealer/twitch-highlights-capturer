@@ -156,6 +156,31 @@ class EventAssembler:
         self._last_nm[kind] = now
         return True
 
+    def conditions(self, now_ms: int, frame: ChatFrame) -> dict:
+        """The trigger rule's parts for this frame: what holds and what is missing."""
+        c, e = self.c, self.e
+        warm = int(now_ms) - self.start_ms >= int(e["warmupS"]) * 1000 and frame.warm
+        enough = frame.trigger_messages >= c["minTriggerMessages"]
+        authors_ok = frame.trigger_authors >= c["minTriggerAuthors"]
+        share_ok = frame.trigger_share >= c["minTriggerShare"]
+        return {"warm": warm, "messages": enough, "authors": authors_ok, "share": share_ok,
+                "fired": warm and enough and authors_ok and share_ok}
+
+    def preview(self, frame: ChatFrame, delta_db: float) -> dict:
+        """The score of this one second alone, by the same formula as an event's."""
+        o = _Open(self.epoch, 0, 0, 0, 0, chat_spike=frame.spike, trigger_share=frame.trigger_share)
+        return self._score(o, delta_db)
+
+    def open_state(self, now_ms: int) -> Optional[dict]:
+        """The open event as it stands now, or None."""
+        o = self._cur
+        if o is None:
+            return None
+        start = max(0, o.est)
+        end = int(now_ms) if o.chat_open else o.end_ms
+        return {"startMs": start, "durationMs": max(0, end - start), "chatOpen": o.chat_open,
+                "lowConfidence": o.lagged, "score": self._score(o, self._delta_db(o, start, end))}
+
     # ---- main ----
     def on_tick(self, now_ms: int, frame: ChatFrame, new_spikes: list,
                 recent_spikes: Callable[[int, int], list]) -> tuple:
@@ -163,11 +188,8 @@ class EventAssembler:
         c, e = self.c, self.e
         events: list = []
         near: list = []
-        warm = now - self.start_ms >= int(e["warmupS"]) * 1000 and frame.warm
-        enough = frame.trigger_messages >= c["minTriggerMessages"]
-        authors_ok = frame.trigger_authors >= c["minTriggerAuthors"]
-        share_ok = frame.trigger_share >= c["minTriggerShare"]
-        fired = warm and enough and authors_ok and share_ok
+        cond = self.conditions(now, frame)
+        warm, enough, authors_ok, share_ok, fired = (cond[k] for k in ("warm", "messages", "authors", "share", "fired"))
 
         if fired and self.on_chat_spike:
             try:

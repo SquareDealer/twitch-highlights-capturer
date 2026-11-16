@@ -106,12 +106,32 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
         spikes = audio.spikes()
         evs, near = asm.on_tick(t, frame, spikes, audio.recent_spikes)
         fr = st["last"]
+        voice = max((float(s.delta_db) for s in audio.recent_spikes(t - int(asm.e["voiceWindowS"] * 1000), t)),
+                    default=0.0)
+        detail = {
+            "configVersion": conf["version"] or 0, "sinceStartMs": t - st["start"],
+            "chat": {
+                "messages": frame.messages, "authors": frame.authors, "baseline": round(frame.baseline, 3),
+                "spike": round(frame.spike, 3), "triggerMessages": frame.trigger_messages,
+                "triggerAuthors": frame.trigger_authors, "laughMessages": frame.laugh_messages,
+                "reactionMessages": frame.reaction_messages, "activeAuthors": frame.active_authors,
+                "activeAuthorsRaw": frame.active_authors_raw, "triggerShare": round(frame.trigger_share, 3),
+            },
+            "conditions": asm.conditions(t, frame),
+            "audio": {
+                "db": round(fr.db, 3), "baselineDb": round(fr.base_db, 3), "deltaDb": round(fr.delta_db, 3),
+                "vad": round(fr.vad, 3), "warm": fr.warm, "spiking": audio.spiking,
+            } if fr else {"db": 0.0, "baselineDb": 0.0, "deltaDb": 0.0, "vad": 0.0, "warm": False, "spiking": False},
+            "score": asm.preview(frame, voice),
+            "event": asm.open_state(t),
+        }
         emit({
             "type": "signals", "tMs": t, "chatSpike": round(frame.spike, 3), "laughShare": round(frame.laugh_share, 3),
             "messages": frame.messages, "triggerShare": round(frame.trigger_share, 3),
             "triggerMessages": frame.trigger_messages, "activeAuthors": frame.active_authors,
             "deltaDb": round(fr.delta_db, 3) if fr else 0.0,
             "vad": round(fr.vad, 3) if fr else 0.0, "warm": t - st["start"] >= conf["warm_ms"],
+            "detail": detail,
         }, stdout)
         send_events(evs)
         for n in near:
@@ -149,21 +169,28 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
 
     def apply_config(msg: dict) -> None:
         """Lay the frame's settings over the file config and apply them without resetting any state.
-        A wrong frame is refused: the previous settings stay."""
+        All or nothing: a wrong or unappliable frame is refused, the previous settings stay."""
         version = msg.get("version")
         try:
             if not isinstance(version, int) or isinstance(version, bool):
                 raise ValueError("version: ожидалось целое число")
             new = overlay(cfg, msg.get("detector"))
-        except ValueError as e:
+            warm_ms = int(new["events"]["warmupS"]) * 1000
+            old = conf["cfg"]
+            try:
+                audio.reconfigure(new["audio"])
+                asm.reconfigure(new)
+                analyzer["chat"].reconfigure(new)  # last: it is atomic itself, the other two revert exactly
+            except Exception:
+                audio.reconfigure(old["audio"])
+                asm.reconfigure(old)
+                raise
+            bad = bad_patterns(new["chat"]["laughWords"]) + bad_patterns(new["chat"]["reactionWords"])
+        except Exception as e:
             log.warning("Кадр config отклонён: %s", e)
-            emit({"type": "config", "version": version, "badPatterns": [], "error": str(e)}, stdout)
+            emit({"type": "config", "version": version, "badPatterns": [], "error": str(e) or type(e).__name__}, stdout)
             return
-        analyzer["chat"].reconfigure(new)
-        audio.reconfigure(new["audio"])
-        asm.reconfigure(new)
-        conf.update(cfg=new, version=version, warm_ms=int(new["events"]["warmupS"]) * 1000)
-        bad = bad_patterns(new["chat"]["laughWords"]) + bad_patterns(new["chat"]["reactionWords"])
+        conf.update(cfg=new, version=version, warm_ms=warm_ms)
         emit({"type": "config", "version": version, "badPatterns": bad}, stdout)
 
     def resync(t_ms: int) -> None:

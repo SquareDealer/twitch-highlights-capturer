@@ -51,3 +51,11 @@ def test_overlay_rejects_wrong_shapes(bad):
 def test_unsafe_pattern():
     assert [unsafe_pattern(p) for p in ["^(a+)+$", "(ab)*", "(a){2,}", r"(.)\1"]] == [True] * 4
     assert [unsafe_pattern(p) for p in ["^pog(gers|champ)?$", "^[ах]*ха[ах]*$", r"^\d+$"]] == [False] * 3
+
+
+@pytest.mark.parametrize("section,key", [("chat", "windowS"), ("chat", "baselineS"), ("chat", "activeWindowS"),
+                                         ("chat", "alpha"), ("audio", "baselineS")])
+def test_overlay_rejects_non_positive_windows_and_alpha(section, key):
+    for bad in (0, -1):
+        with pytest.raises(ValueError):
+            overlay(DEFAULTS, {section: {key: bad}})

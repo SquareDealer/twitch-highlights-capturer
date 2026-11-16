@@ -30,6 +30,7 @@ class AudioFrame:
     delta_db: float
     vad: float
     warm: bool
+    base_db: float = 0.0  # median of the voiced background (db itself until it is warm)
 
 
 def _audio_cfg(cfg: dict) -> dict:
@@ -47,8 +48,14 @@ class AudioAnalyzer:
 
     def reconfigure(self, cfg: dict) -> None:
         """New thresholds from the next block on; the block size and all accumulated state stay."""
-        self.c = {**_audio_cfg(cfg), "blockMs": self.block_ms}
-        self.base_ms = int(self.c["baselineS"] * 1000)
+        c = {**_audio_cfg(cfg), "blockMs": self.block_ms}
+        self.base_ms = int(c["baselineS"] * 1000)  # may raise: nothing is changed then
+        self.c = c
+
+    @property
+    def spiking(self) -> bool:
+        """A voice spike is open right now."""
+        return self._cur is not None
 
     def _reset_state(self) -> None:
         self._buf = b""
@@ -108,8 +115,9 @@ class AudioAnalyzer:
         while self._base and self._base[0][0] <= cut:
             self._base.popleft()
         warm = len(self._base) >= MIN_BASE_BLOCKS
-        delta = db - statistics.median(b[1] for b in self._base) if warm else 0.0
-        self._frames.append(AudioFrame(t_ms=t, db=db, delta_db=delta, vad=p, warm=warm))
+        base_db = statistics.median(b[1] for b in self._base) if warm else db
+        delta = db - base_db if warm else 0.0
+        self._frames.append(AudioFrame(t_ms=t, db=db, delta_db=delta, vad=p, warm=warm, base_db=base_db))
 
         c = self.c
         hot = warm and delta >= c["spikeDb"] and p >= c["spikeVad"]

@@ -37,6 +37,8 @@ class ChatFrame:
     reaction_messages: int = 0
     active_authors: int = 0
     trigger_share: float = 0.0
+    baseline: float = 0.0  # median message count of the background windows
+    active_authors_raw: int = 0  # active authors without the minActive floor
 
 
 def normalize(text: str) -> str:
@@ -104,24 +106,30 @@ class ChatAnalyzer:
         self._first_tick: Optional[int] = None
 
     def _apply(self, cfg: dict) -> None:
-        self.cfg = cfg
-        self.c = _chat_cfg(cfg)
+        c = _chat_cfg(cfg)
         ev = cfg.get("events", {}) if isinstance(cfg, dict) else {}
-        self.warm_ms = int(ev.get("warmupS", 60)) * 1000
-        self.win_ms = int(self.c["windowS"] * 1000)
-        self.base_ms = int(self.c["baselineS"] * 1000)
-        self.active_ms = int(self.c["activeWindowS"] * 1000)
+        warm_ms = int(ev.get("warmupS", 60)) * 1000
+        win_ms = int(c["windowS"] * 1000)
+        base_ms = int(c["baselineS"] * 1000)
+        active_ms = int(c["activeWindowS"] * 1000)
+        self.cfg, self.c = cfg, c  # every value is computed above: a failure leaves the analyzer untouched
+        self.warm_ms, self.win_ms, self.base_ms, self.active_ms = warm_ms, win_ms, base_ms, active_ms
 
     def reconfigure(self, cfg: dict) -> None:
-        """New settings from the next message/tick on; nothing accumulated is dropped or reclassified."""
-        old_win = self.win_ms
-        self._apply(cfg)
-        if self.win_ms != old_win:
-            self._rebase(old_win)
+        """New settings from the next message/tick on; nothing accumulated is dropped or reclassified.
+        All or nothing: if the new settings cannot be applied the analyzer keeps the previous ones."""
+        old = (self.cfg, self.c, self.warm_ms, self.win_ms, self.base_ms, self.active_ms)
+        try:
+            self._apply(cfg)
+            if self.win_ms != old[3]:
+                self._base = self._rebased(old[3])
+        except Exception:
+            self.cfg, self.c, self.warm_ms, self.win_ms, self.base_ms, self.active_ms = old
+            raise
 
-    def _rebase(self, old_win: int) -> None:
-        """Re-express the baseline for the new window: recount from the history where it covers the
-        whole new window, otherwise scale by new/old window length."""
+    def _rebased(self, old_win: int) -> list:
+        """The baseline re-expressed for the new window: recounted from the history where it covers the
+        whole new window, otherwise scaled by new/old window length."""
         new_win = self.win_ms
         ratio = new_win / old_win if old_win > 0 else 1.0
         hist = sorted(self._hist, key=lambda h: h[0])
@@ -134,7 +142,7 @@ class ChatAnalyzer:
                 out.append((t, len(win), len({u for _, u in win})))
             else:
                 out.append((t, n * ratio, a * ratio))
-        self._base = out
+        return out
 
     def add(self, msg: ChatMessage) -> None:
         try:
@@ -208,7 +216,8 @@ class ChatAnalyzer:
         self._hist = [x for x in self._hist if x[0] >= hcut]
         self._hist_from = max(self._hist_from, hcut)
         acut = now_ms - self.active_ms
-        active = max(int(self.c["minActive"]), len({u for t, u in self._hist if acut <= t <= now_ms}))
+        raw_active = len({u for t, u in self._hist if acut <= t <= now_ms})
+        active = max(int(self.c["minActive"]), raw_active)
         return ChatFrame(
             t_ms=now_ms, messages=n, authors=a,
             spike=(n + alpha) / (mb + alpha), author_spike=(a + alpha) / (ab + alpha),
@@ -218,4 +227,5 @@ class ChatAnalyzer:
             trigger_messages=len(trig), trigger_authors=trig_authors,
             laugh_messages=laugh, reaction_messages=react_only,
             active_authors=active, trigger_share=trig_authors / active,
+            baseline=float(mb), active_authors_raw=raw_active,
         )

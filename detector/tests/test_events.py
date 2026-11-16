@@ -230,3 +230,28 @@ def test_reconfigure_changes_the_trigger_from_the_next_tick():
     asm.reconfigure(overlay(DEFAULTS, {"chat": {"minTriggerShare": 0.03}}))
     out, _, _ = run_from(105, frames, until=140, asm=asm)
     assert len(out) == 1 and out[0][1].trigger_time_ms == 105_000
+
+
+def test_conditions_name_what_is_missing():
+    asm = EventAssembler(DEFAULTS)
+    assert asm.conditions(70_000, tf(70, msgs=5, authors=1, active=40)) == {"warm": True, "messages": True, "authors": False, "share": False, "fired": False}
+    assert asm.conditions(10_000, tf(10))["warm"] is False
+
+
+def test_preview_matches_the_spec_example():
+    asm = EventAssembler(DEFAULTS)
+    assert asm.preview(tf(70, msgs=4, authors=4, active=40, spike=4.0), 15.0) == {"total": 4.3, "share": 1.0, "speed": 1.8, "audio": 0.5}
+
+
+def test_open_state_follows_the_event():
+    asm = EventAssembler(DEFAULTS)
+    assert asm.open_state(65_000) is None
+    asm.on_tick(70_000, tf(70, authors=4), [], lambda lo, hi: [])
+    s70 = asm.open_state(70_000)
+    assert s70["startMs"] == 62_000 and s70["chatOpen"] is True and s70["lowConfidence"] is True
+    asm.on_tick(71_000, tf(71, authors=4), [], lambda lo, hi: [])
+    assert asm.open_state(71_000)["durationMs"] == s70["durationMs"] + 1000
+    assert set(s70["score"]) == {"total", "share", "speed", "audio"}
+    for sec in range(72, 100):
+        asm.on_tick(sec * 1000, quiet(sec), [], lambda lo, hi: [])
+    assert asm.open_state(99_000) is None
