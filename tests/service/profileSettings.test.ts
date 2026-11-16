@@ -51,3 +51,18 @@ it('drops unknown keys and rejects non-objects', () => {
   expect(r.ok && JSON.stringify(r.value)).toBe(JSON.stringify(base()));
   expect(validateSettings(null)).toEqual({ ok: false, error: 'Некорректные настройки профиля', path: '' });
 });
+it('flags more than three unbounded quantifiers, keeps every default pattern', () => {
+  expect(unsafePattern('^[ах]*[ах]*[ах]*[ах]*[ах]*[ах]*[ах]*$')).toBe(true);
+  expect(unsafePattern('^a+b{2,}c*d+$')).toBe(true); // four: {n,} counts too
+  expect(unsafePattern(String.raw`^\*\+\*\+a+$`)).toBe(false); // escaped ones do not count
+  expect(unsafePattern('^[ах]*ха[ах]*$')).toBe(false);
+  const chat = defaultConfig('/d').detector.chat;
+  expect([...chat.laughWords, ...chat.reactionWords].filter(unsafePattern)).toEqual([]);
+  expect(validateSettings({ ...base(), detector: { ...base().detector, chat: { ...base().detector.chat, laughWords: ['^[ах]*[ах]*[ах]*[ах]*[ах]*[ах]*[ах]*$'] } } }))
+    .toMatchObject({ ok: false, error: expect.stringContaining('шаблон может подвесить детектор') });
+});
+it('describes alpha and warmup correctly', () => {
+  const hint = (p: string) => FIELDS.find((d) => d.path === p)!.hint;
+  expect(hint('detector.chat.alpha')).toContain('больше — плавнее');
+  expect(hint('detector.events.warmupS')).toContain('копит фон');
+});

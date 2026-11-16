@@ -59,3 +59,14 @@ def test_overlay_rejects_non_positive_windows_and_alpha(section, key):
     for bad in (0, -1):
         with pytest.raises(ValueError):
             overlay(DEFAULTS, {section: {key: bad}})
+
+
+def test_many_adjacent_unbounded_quantifiers_are_unsafe():
+    assert unsafe_pattern("^[ах]*[ах]*[ах]*[ах]*[ах]*[ах]*[ах]*$") is True
+    assert unsafe_pattern("^a+b{2,}c*d+$") is True  # four: {n,} counts too
+    assert unsafe_pattern(r"^\*\+\*\+a+$") is False  # escaped ones do not count
+
+
+def test_every_default_pattern_is_safe():
+    assert not unsafe_pattern("^[ах]*ха[ах]*$")
+    assert [p for p in DEFAULTS["chat"]["laughWords"] + DEFAULTS["chat"]["reactionWords"] if unsafe_pattern(p)] == []

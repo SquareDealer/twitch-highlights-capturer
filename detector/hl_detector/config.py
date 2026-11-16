@@ -5,6 +5,9 @@ import math
 import re
 
 _UNSAFE = re.compile(r"\)[*+{]|\\[1-9]")
+# an unbounded quantifier not escaped by a backslash: *, + or {n,}; mirrors UNBOUNDED in profileSettings.ts
+_UNBOUNDED = re.compile(r"(?<!\\)(?:[*+]|\{\d+,\})")
+_MAX_UNBOUNDED = 3
 
 DEFAULTS: dict = {
     "chat": {
@@ -55,8 +58,9 @@ def load_config(path: str) -> dict:
 
 
 def unsafe_pattern(p: str) -> bool:
-    """A quantified group or a backreference: may backtrack catastrophically, never run."""
-    return _UNSAFE.search(p) is not None
+    """A quantified group, a backreference or more than three unbounded quantifiers: may backtrack
+    catastrophically, never run."""
+    return _UNSAFE.search(p) is not None or len(_UNBOUNDED.findall(p)) > _MAX_UNBOUNDED
 
 
 def _number(v) -> bool:

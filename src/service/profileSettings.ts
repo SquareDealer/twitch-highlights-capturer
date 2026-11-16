@@ -38,11 +38,11 @@ export const FIELDS: FieldDef[] = [
   f('detector.chat.windowS', 'Окно подсчёта сообщений', 'с', 'trigger', 1, 60, false, 'window',
     'За какое время считаются триггерные сообщения и скорость чата.'),
   f('detector.events.warmupS', 'Прогрев после запуска', 'с', 'trigger', 0, 600, false, 'now',
-    'Сколько секунд после запуска детектор только копирует фон и не срабатывает.'),
+    'Сколько секунд после запуска детектор только копит фон и не срабатывает.'),
   f('detector.chat.baselineS', 'Фон чата', 'с', 'event', 30, 1800, false, 'window',
     'За какое время усредняется обычная скорость чата, с которой сравнивается всплеск.'),
   f('detector.chat.alpha', 'Сглаживание скорости чата', '—', 'event', 0.1, 10, false, 'now',
-    'Насколько сглаживается скорость чата; меньше — плавнее и медленнее реакция.'),
+    'Насколько сглаживается скорость чата; больше — плавнее и медленнее реакция.'),
   f('detector.chat.endSpike', 'Событие длится, пока скорость чата не ниже', '×', 'event', 1, 20, false, 'now',
     'Во сколько раз скорость чата должна превышать фон, чтобы событие продолжалось.'),
   f('detector.events.mergeGapS', 'Склеивать события ближе', 'с', 'event', 0, 120, false, 'now',
@@ -138,9 +138,14 @@ export function settingsFromConfig(cfg: ServiceConfig): ProfileSettings {
   return assemble(num, { laugh: [...cfg.detector.chat.laughWords], reaction: [...cfg.detector.chat.reactionWords] });
 }
 
-/** True for patterns that can hang the matcher: repetition after a group, or a backreference. */
+/** An unbounded quantifier not escaped by a backslash: *, + or {n,}; mirrors _UNBOUNDED in detector/hl_detector/config.py. */
+const UNBOUNDED = /(?<!\\)(?:[*+]|\{\d+,\})/g;
+const MAX_UNBOUNDED = 3;
+
+/** True for patterns that can hang the matcher: repetition after a group, a backreference,
+ *  or more than three unbounded quantifiers. */
 export function unsafePattern(p: string): boolean {
-  return /\)[*+{]/.test(p) || /\\[1-9]/.test(p);
+  return /\)[*+{]/.test(p) || /\\[1-9]/.test(p) || (p.match(UNBOUNDED)?.length ?? 0) > MAX_UNBOUNDED;
 }
 
 type Result = { ok: true; value: ProfileSettings } | { ok: false; error: string; path: string };
