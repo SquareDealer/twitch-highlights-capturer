@@ -6,7 +6,7 @@ import re
 
 _UNSAFE = re.compile(r"\)[*+{]|\\[1-9]")
 # an unbounded quantifier not escaped by a backslash: *, + or {n,}; mirrors UNBOUNDED in profileSettings.ts
-_UNBOUNDED = re.compile(r"(?<!\\)(?:[*+]|\{\d+,\})")
+_UNBOUNDED = re.compile(r"(?<!\\)(?:[*+]|\{[0-9]+,\})")
 _MAX_UNBOUNDED = 3
 
 DEFAULTS: dict = {

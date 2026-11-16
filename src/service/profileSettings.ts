@@ -139,7 +139,7 @@ export function settingsFromConfig(cfg: ServiceConfig): ProfileSettings {
 }
 
 /** An unbounded quantifier not escaped by a backslash: *, + or {n,}; mirrors _UNBOUNDED in detector/hl_detector/config.py. */
-const UNBOUNDED = /(?<!\\)(?:[*+]|\{\d+,\})/g;
+const UNBOUNDED = /(?<!\\)(?:[*+]|\{[0-9]+,\})/g;
 const MAX_UNBOUNDED = 3;
 
 /** True for patterns that can hang the matcher: repetition after a group, a backreference,
