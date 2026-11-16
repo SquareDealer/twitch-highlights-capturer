@@ -8,13 +8,16 @@ import { RingBufferManager } from '../../src/main/capture/ringBuffer';
 import { openDb } from '../../src/main/db';
 import { createClipRepo } from '../../src/service/clipRepo';
 import { defaultConfig, type ServiceConfig } from '../../src/service/config';
-import { Cutter } from '../../src/service/cutter';
+import { Cutter, type CutDecision } from '../../src/service/cutter';
+import type { Profile } from '../../src/service/profiles';
+import { settingsFromConfig } from '../../src/service/profileSettings';
 import type { DetectorEvent, FeedClip } from '../../src/service/types';
 import { hasFfmpeg, probeDurationSec, synthVideo, tmpDir } from '../helpers';
 
 let ring: RingBufferManager;
 let clips: ReturnType<typeof createClipRepo>;
 let cfg: ServiceConfig;
+let profile: Profile;
 let session: CaptureSession;
 let concatCalls: { segs: string[]; out: string }[];
 let concatError = 'ffmpeg упал';
@@ -52,8 +55,9 @@ const lastRange = () => {
 
 function build(over: Partial<ServiceConfig> = {}, tailTimeoutMs = 200) {
   cfg = { ...defaultConfig(tmpDir()), ...over };
+  profile = { id: 'p1', name: 'Тест', isDefault: true, settings: settingsFromConfig(cfg), createdAt: '', updatedAt: '' };
   cutter = new Cutter({
-    ring, clips, config: () => cfg, session: () => session,
+    ring, clips, config: () => cfg, session: () => session, profile: () => profile,
     concat: async (segs, out) => {
       concatCalls.push({ segs, out });
       if (concatFail > 0) {
@@ -139,7 +143,7 @@ test('writes clip.json next to the mp4 with event fields and configVersion', asy
   expect(c.jsonPath.replace(/\.json$/, '')).toBe(c.mp4Path.replace(/\.mp4$/, ''));
   const j = JSON.parse(readFileSync(c.jsonPath, 'utf8'));
   expect(j).toMatchObject({ id: c.id, status: 'new', triggers: ['laugh'], score: 7.5, signals: ev.signals, event: ev });
-  expect(j.configVersion).toBe(createHash('sha1').update(JSON.stringify(cfg.detector)).digest('hex'));
+  expect(j.configVersion).toBe(createHash('sha1').update(JSON.stringify(profile.settings)).digest('hex'));
 });
 
 test('unpins the range after success and after failure', async () => {
@@ -182,7 +186,7 @@ test('emits paused after a failed cut when free space dropped below the reserve'
   cutter.on('paused', (p: { reason: string }) => reasons.push(p.reason));
   concatFail = 3;
   const probe = vi.fn().mockResolvedValueOnce(1e12).mockResolvedValue(0);
-  cutter = new Cutter({ ring, clips, config: () => cfg, session: () => session, concat: async (_s, out) => { writeFileSync(out, 'x'); throw new Error('ffmpeg упал'); }, freeBytes: probe, now: () => NOW, sleep: async () => {}, tailTimeoutMs: 50 });
+  cutter = new Cutter({ ring, clips, config: () => cfg, session: () => session, profile: () => profile, concat: async (_s, out) => { writeFileSync(out, 'x'); throw new Error('ffmpeg упал'); }, freeBytes: probe, now: () => NOW, sleep: async () => {}, tailTimeoutMs: 50 });
   cutter.on('paused', (p: { reason: string }) => reasons.push(p.reason));
   await cutter.onEvent(event());
   expect(only().status).toBe('error');
@@ -191,7 +195,7 @@ test('emits paused after a failed cut when free space dropped below the reserve'
 
 test('manual clips do not count toward the hourly limiter', async () => {
   fill(1, 0, 70);
-  cfg.maxClipsPerHour = 2;
+  profile.settings.cut.maxClipsPerHour = 2;
   for (let i = 0; i < 5; i++) expect((await cutter.manual()).ok).toBe(true);
   await cutter.onEvent(event({ scores: { total: 1.1, share: 0, speed: 0, audio: 0 } }));
   await cutter.onEvent(event({ scores: { total: 2.2, share: 0, speed: 0, audio: 0 } }));
@@ -225,7 +229,7 @@ test('cuts what exists when the event starts before the oldest segment', async (
 
 test('drops events over the hourly limit unless the score beats the median', async () => {
   fill(1, 0, 70);
-  cfg.maxClipsPerHour = 3;
+  profile.settings.cut.maxClipsPerHour = 3;
   for (const s of [2.2, 5.5, 9.1]) {
     await cutter.onEvent(event({ scores: { total: s, share: 0, speed: 0, audio: 0 } }));
   }
@@ -346,8 +350,9 @@ test.skipIf(!hasFfmpeg)('produces a playable mp4 from real ts segments without r
   files.forEach((f, i) => ring.add({ ...seg(1, i), path: join(dir, f) }));
   const { concatSegments } = await import('../../src/main/capture/concat');
   cfg = { ...defaultConfig(tmpDir()), preRollMs: 2000, postRollMs: 2000 };
+  profile = { ...profile, settings: settingsFromConfig(cfg) };
   cutter = new Cutter({
-    ring, clips, config: () => cfg, session: () => session, concat: concatSegments('ffmpeg'), freeBytes: async () => 1e12, now: () => NOW,
+    ring, clips, config: () => cfg, session: () => session, profile: () => profile, concat: concatSegments('ffmpeg'), freeBytes: async () => 1e12, now: () => NOW,
   });
   await cutter.onEvent(event({ startMs: 6000, endMs: 10_000 }));
   const c = only();
@@ -362,4 +367,70 @@ test('passes scores.total to the feed row', async () => {
   fill(1, 0, 70);
   await cutter.onEvent(event({ scores: { total: 7.5, share: 3, speed: 2, audio: 1 } }));
   expect(only().score).toBe(7.5);
+});
+
+test('takes the roll and length limits from the profile at event time', async () => {
+  build(); fill(1, 0, 80);
+  profile.settings.cut = { ...profile.settings.cut, preRollMs: 4000, postRollMs: 2000 };
+  cfg.preRollMs = 60000; // the shared config no longer matters
+  await cutter.onEvent(event()); // event 100–110 s
+  expect(lastRange()).toEqual([96, 112]);
+});
+
+test('stamps auto clips with the profile and manual clips with null', async () => {
+  fill(1, 0, 100);
+  await cutter.onEvent(event());
+  profile.name = 'Новое имя';
+  await cutter.onEvent(event());
+  await cutter.manual();
+  const byTrigger = clips.list().filter((c) => c.triggers[0] === 'laugh').sort((a, b) => a.id.localeCompare(b.id));
+  expect(byTrigger.map((c) => [c.profileId, c.profileName])).toEqual([['p1', 'Тест'], ['p1', 'Новое имя']]);
+  const m = clips.list().find((c) => c.triggers[0] === 'manual')!;
+  expect([m.profileId, m.profileName]).toEqual([null, null]);
+});
+
+test('writes the profile snapshot and its hash into clip.json', async () => {
+  fill(1, 0, 70);
+  await cutter.onEvent(event());
+  const j = JSON.parse(readFileSync(only().jsonPath, 'utf8'));
+  expect(j.profile).toEqual({ id: 'p1', name: 'Тест', settings: profile.settings });
+  expect(j.configVersion).toBe(createHash('sha1').update(JSON.stringify(profile.settings)).digest('hex'));
+});
+
+test('writes a null profile and the manual hash into the clip.json of a manual clip', async () => {
+  fill(1, 0, 70);
+  await cutter.manual();
+  const j = JSON.parse(readFileSync(only().jsonPath, 'utf8'));
+  expect(j.profile).toBeNull();
+  expect(j.configVersion).toBe(createHash('sha1').update('manual').digest('hex'));
+});
+
+test('reports a clip decision for a cut event', async () => {
+  fill(1, 0, 70);
+  const seen: CutDecision[] = [];
+  cutter.on('decision', (d) => seen.push(d));
+  const ev = event();
+  await cutter.onEvent(ev);
+  expect(seen).toEqual([{ kind: 'clip', clipId: 'id-0001', event: ev }]);
+});
+
+test('reports events dropped by the hourly limiter with the limit and the median', async () => {
+  build(); profile.settings.cut.maxClipsPerHour = 2; fill(1, 0, 200);
+  const seen: CutDecision[] = [];
+  cutter.on('decision', (d) => seen.push(d));
+  await cutter.onEvent(event({ scores: { total: 4, share: 0, speed: 0, audio: 0 } }));
+  await cutter.onEvent(event({ scores: { total: 6, share: 0, speed: 0, audio: 0 } }));
+  await cutter.onEvent(event({ scores: { total: 3, share: 0, speed: 0, audio: 0 } }));
+  expect(seen.at(-1)).toMatchObject({ kind: 'limited', limit: 2, median: 5 });
+});
+
+test('reports events dropped while cutting is paused', async () => {
+  fill(1, 0, 70);
+  const seen: CutDecision[] = [];
+  cutter.on('decision', (d) => seen.push(d));
+  paused = true;
+  const ev = event();
+  await cutter.onEvent(ev);
+  await cutter.onEvent(ev);
+  expect(seen).toEqual(Array(2).fill({ kind: 'paused', event: ev, reason: 'Нарезка приостановлена' }));
 });

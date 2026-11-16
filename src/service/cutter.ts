@@ -7,6 +7,7 @@ import type { RingBufferManager } from '../main/capture/ringBuffer';
 import { feedClipPaths } from './clipPaths';
 import type { createClipRepo } from './clipRepo';
 import type { ServiceConfig } from './config';
+import type { Profile } from './profiles';
 import type { DetectorEvent, FeedClip } from './types';
 
 export interface CutterDeps {
@@ -22,7 +23,14 @@ export interface CutterDeps {
   newId?: () => string;
   sleep?: (ms: number) => Promise<void>;
   tailTimeoutMs?: number;
+  /** The stream's autoclip profile; read once per detector event. */
+  profile: () => Profile;
 }
+
+export type CutDecision =
+  | { kind: 'clip'; event: DetectorEvent; clipId: string }
+  | { kind: 'limited'; event: DetectorEvent; limit: number; median: number }
+  | { kind: 'paused'; event: DetectorEvent; reason: string };
 
 const CONCAT_ATTEMPTS = 3;
 const RETRY_PAUSE_MS = 1000;
@@ -38,7 +46,8 @@ const median = (xs: number[]): number => {
 /**
  * Turns detector events into MP4 clips: pins the range in the ring buffer, waits for the tail,
  * concatenates segments without re-encoding and tracks the clip in the feed table.
- * Events: 'clip' (FeedClip, on every change of a record), 'paused' ({ reason }).
+ * Events: 'clip' (FeedClip, on every change of a record), 'paused' ({ reason }),
+ * 'decision' (CutDecision, exactly one per detector event passed to onEvent).
  */
 export class Cutter extends EventEmitter {
   private readonly active = new Set<Promise<unknown>>();
@@ -73,12 +82,22 @@ export class Cutter extends EventEmitter {
   private async handleEvent(ev: DetectorEvent): Promise<void> {
     try {
       const cfg = this.deps.config();
-      if (await this.checkPaused(cfg)) return;
-      if (this.overLimit(ev)) return;
-      const preRoll = ev.confidence === 'low' ? cfg.preRollLowConfidenceMs : cfg.preRollMs;
+      const profile = this.deps.profile();
+      const cut = profile.settings.cut;
+      const reason = await this.checkPaused(cfg);
+      if (reason !== null) {
+        this.emit('decision', { kind: 'paused', event: ev, reason } satisfies CutDecision);
+        return;
+      }
+      const med = this.overLimit(ev, cut.maxClipsPerHour);
+      if (med !== null) {
+        this.emit('decision', { kind: 'limited', event: ev, limit: cut.maxClipsPerHour, median: med } satisfies CutDecision);
+        return;
+      }
+      const preRoll = ev.confidence === 'low' ? cut.preRollLowConfidenceMs : cut.preRollMs;
       const from = Math.max(0, ev.startMs - preRoll);
-      const to = Math.min(ev.endMs + cfg.postRollMs, from + cfg.maxClipMs);
-      await this.cut(ev, from, to, true);
+      const to = Math.min(ev.endMs + cut.postRollMs, from + cut.maxClipMs);
+      await this.cut(ev, from, to, true, profile);
     } catch (err) {
       console.error('cutter: onEvent failed', err);
     }
@@ -91,7 +110,7 @@ export class Cutter extends EventEmitter {
   private async handleManual(): Promise<Result<FeedClip>> {
     try {
       const cfg = this.deps.config();
-      if (await this.checkPaused(cfg)) return { ok: false, error: 'Нарезка приостановлена' };
+      if ((await this.checkPaused(cfg)) !== null) return { ok: false, error: 'Нарезка приостановлена' };
       const { ring } = this.deps;
       let epoch = this.deps.session().epoch;
       let last = ring.latest(epoch);
@@ -109,7 +128,7 @@ export class Cutter extends EventEmitter {
         triggers: ['manual'], confidence: 'normal', scores: { total: 0, share: 0, speed: 0, audio: 0 },
         signals: { chatSpike: 0, laughShare: 0, reactionShare: 0, deltaDb: 0 },
       };
-      const clip = await this.cut(ev, from, to, false);
+      const clip = await this.cut(ev, from, to, false, null);
       return clip.status === 'error' ? { ok: false, error: clip.error ?? 'Не удалось нарезать клип' } : { ok: true, value: clip };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -133,7 +152,8 @@ export class Cutter extends EventEmitter {
     return p;
   }
 
-  private async checkPaused(cfg: ServiceConfig): Promise<boolean> {
+  /** Returns the reason cutting is paused, or null when it runs. */
+  private async checkPaused(cfg: ServiceConfig): Promise<string | null> {
     let reason: string | null = null;
     if (this.deps.paused?.()) {
       reason = 'Нарезка приостановлена';
@@ -147,10 +167,10 @@ export class Cutter extends EventEmitter {
     }
     if (reason === null) {
       this.pausedReason = null;
-      return false;
+      return null;
     }
     this.notePaused(reason);
-    return true;
+    return reason;
   }
 
   /** Emits 'paused' only when the pause starts or its reason changes, not for every dropped event. */
@@ -161,12 +181,13 @@ export class Cutter extends EventEmitter {
   }
 
   /** Noise limiter: past the hourly quota only events scoring above the median of recent clips get through. */
-  private overLimit(ev: DetectorEvent): boolean {
-    const cfg = this.deps.config();
+  /** Returns the median the event was compared with when it is dropped, null when it passes. */
+  private overLimit(ev: DetectorEvent, maxClipsPerHour: number): number | null {
     const sessionId = this.deps.session().id;
     const since = new Date(this.now().getTime() - HOUR_MS).toISOString();
-    if (this.deps.clips.countSince(sessionId, since) < cfg.maxClipsPerHour) return false;
-    return ev.scores.total <= median(this.deps.clips.scoresSince(sessionId, since));
+    if (this.deps.clips.countSince(sessionId, since) < maxClipsPerHour) return null;
+    const med = median(this.deps.clips.scoresSince(sessionId, since));
+    return ev.scores.total <= med ? med : null;
   }
 
   private emitClip(id: string): FeedClip {
@@ -175,7 +196,7 @@ export class Cutter extends EventEmitter {
     return clip;
   }
 
-  private async cut(ev: DetectorEvent, from: number, to: number, waitTail: boolean): Promise<FeedClip> {
+  private async cut(ev: DetectorEvent, from: number, to: number, waitTail: boolean, profile: Profile | null): Promise<FeedClip> {
     const { ring, clips } = this.deps;
     const cfg = this.deps.config();
     const session = this.deps.session();
@@ -186,10 +207,11 @@ export class Cutter extends EventEmitter {
       id, sessionId: session.id, streamer: session.streamer, streamId: session.streamId, epoch: ev.epoch,
       startMs: from, endMs: to, durationMs: to - from, bytes: 0, triggers: ev.triggers, confidence: ev.confidence,
       score: ev.scores.total, signals: ev.signals, status: 'pending', error: null, mp4Path: paths.mp4Path,
-      jsonPath: paths.jsonPath, fileDeleted: false, createdAt: createdAt.toISOString(), statusChangedAt: null, profileId: null, profileName: null,
+      jsonPath: paths.jsonPath, fileDeleted: false, createdAt: createdAt.toISOString(), statusChangedAt: null, profileId: profile?.id ?? null, profileName: profile?.name ?? null,
     };
     clips.insert(base);
     this.emitClip(id);
+    if (profile) this.emit('decision', { kind: 'clip', event: ev, clipId: id } satisfies CutDecision);
     ring.pin(id, ev.epoch, from, to);
     const part = `${paths.mp4Path}.part`;
     try {
@@ -205,9 +227,10 @@ export class Cutter extends EventEmitter {
       const endMs = segs[segs.length - 1]!.endMs;
       const durationMs = endMs - startMs;
       const done: FeedClip = { ...base, status: 'new', bytes, startMs, endMs, durationMs };
-      const configVersion = createHash('sha1').update(JSON.stringify(cfg.detector)).digest('hex');
+      const snapshot = profile ? { id: profile.id, name: profile.name, settings: profile.settings } : null;
+      const configVersion = createHash('sha1').update(profile ? JSON.stringify(profile.settings) : 'manual').digest('hex');
       try {
-        await writeFile(paths.jsonPath, JSON.stringify({ ...done, event: ev, configVersion }, null, 2), 'utf8');
+        await writeFile(paths.jsonPath, JSON.stringify({ ...done, event: ev, profile: snapshot, configVersion }, null, 2), 'utf8');
       } catch (err) {
         await rm(paths.mp4Path, { force: true });
         throw err;

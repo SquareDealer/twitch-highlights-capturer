@@ -11,6 +11,7 @@ import { createRepos, type Repos } from '../main/db/repos';
 import { createClipRepo } from './clipRepo';
 import { saveConfigPatch, type ServiceConfig } from './config';
 import { Cutter } from './cutter';
+import { settingsFromConfig } from './profileSettings';
 import { DetectorProcess, type DetectorHealth, type DetectorSignals } from './detectorProcess';
 import { appendNearMiss } from './nearMissLog';
 import type { DetectorEvent, FeedClip } from './types';
@@ -206,6 +207,8 @@ export class StreamRegistry extends EventEmitter {
       session: () => manager!.current() ?? stream.session,
       concat: this.deps.concat,
       paused: this.deps.cuttingPaused,
+      // Placeholder: Task 7 replaces it with the stream's real profile.
+      profile: () => ({ id: 'default', name: 'По умолчанию', isDefault: true, settings: settingsFromConfig(this.deps.config()), createdAt: '', updatedAt: '' }),
     });
     manager = new CaptureSessionManager({
       runner: this.runner,
