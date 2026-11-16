@@ -56,6 +56,15 @@ const MIGRATIONS: string[] = [
   CREATE INDEX feed_clips_streamer ON feed_clips (streamer, created_at);
   CREATE INDEX feed_clips_status ON feed_clips (status);
   `,
+  `
+  CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, settings TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE UNIQUE INDEX profiles_name ON profiles (name COLLATE NOCASE);
+  CREATE TABLE channel_profiles (channel TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE);
+  ALTER TABLE feed_clips ADD COLUMN profile_id TEXT;
+  ALTER TABLE feed_clips ADD COLUMN profile_name TEXT;
+  `,
 ];
 
 /** Opens (and migrates) the application database. Use ':memory:' in tests. */

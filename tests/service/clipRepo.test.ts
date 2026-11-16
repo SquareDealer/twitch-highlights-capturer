@@ -7,7 +7,7 @@ const clip = (id: string, over: Partial<FeedClip> = {}): FeedClip => ({
   bytes: 123456, triggers: ['laugh', 'mass'], confidence: 'normal', score: 0.8,
   signals: { chatSpike: 3, laughShare: 0.5, reactionShare: 0.1, deltaDb: 6 },
   status: 'new', error: null, mp4Path: `/c/${id}.mp4`, jsonPath: `/c/${id}.json`, fileDeleted: false,
-  createdAt: '2026-11-15T10:00:00.000Z', statusChangedAt: null, ...over,
+  createdAt: '2026-11-15T10:00:00.000Z', statusChangedAt: null, profileId: null, profileName: null, ...over,
 });
 
 let repo: ReturnType<typeof createClipRepo>;
@@ -71,4 +71,11 @@ test('rejectedWithFiles возвращает отклонённые клипы �
   repo.insert(clip('t', { status: 'taken' }));
   expect(repo.rejectedWithFiles().map((c) => c.id)).toEqual(['r1', 'r2']);
   expect(repo.rejectedWithFiles('2026-11-10T00:00:00.000Z').map((c) => c.id)).toEqual(['r1']);
+});
+
+it('stores and reads the profile of a clip', () => {
+  repo.insert(clip('with', { profileId: 'p1', profileName: 'А' }));
+  repo.insert(clip('without', { profileId: null, profileName: null }));
+  expect(repo.get('with')).toMatchObject({ profileId: 'p1', profileName: 'А' });
+  expect(repo.get('without')).toMatchObject({ profileId: null, profileName: null });
 });

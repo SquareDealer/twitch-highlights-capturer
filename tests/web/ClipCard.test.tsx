@@ -10,7 +10,7 @@ const clip = (over: Partial<FeedClip> = {}): FeedClip => ({
   id: 'c1', sessionId: 's', streamer: 'shroud', streamId: 'x', epoch: 0, startMs: 0, endMs: 38000, durationMs: 38000, bytes: 1,
   triggers: ['laugh', 'audio'], confidence: 'normal', score: 4.3,
   signals: { chatSpike: 5.2, laughShare: 0.61, reactionShare: 0, deltaDb: 14 },
-  status: 'new', error: null, mp4Path: '', jsonPath: '', fileDeleted: false, createdAt: '2026-11-15T19:42:00', statusChangedAt: null,
+  status: 'new', error: null, mp4Path: '', jsonPath: '', fileDeleted: false, createdAt: '2026-11-15T19:42:00', statusChangedAt: null, profileId: null, profileName: null,
   ...over,
 });
 

@@ -41,4 +41,6 @@ export interface FeedClip {
   fileDeleted: boolean;
   createdAt: string;
   statusChangedAt: string | null;
+  profileId: string | null;     // null: manual clip or clip made before profiles
+  profileName: string | null;
 }

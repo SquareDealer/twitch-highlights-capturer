@@ -186,7 +186,7 @@ export class Cutter extends EventEmitter {
       id, sessionId: session.id, streamer: session.streamer, streamId: session.streamId, epoch: ev.epoch,
       startMs: from, endMs: to, durationMs: to - from, bytes: 0, triggers: ev.triggers, confidence: ev.confidence,
       score: ev.scores.total, signals: ev.signals, status: 'pending', error: null, mp4Path: paths.mp4Path,
-      jsonPath: paths.jsonPath, fileDeleted: false, createdAt: createdAt.toISOString(), statusChangedAt: null,
+      jsonPath: paths.jsonPath, fileDeleted: false, createdAt: createdAt.toISOString(), statusChangedAt: null, profileId: null, profileName: null,
     };
     clips.insert(base);
     this.emitClip(id);

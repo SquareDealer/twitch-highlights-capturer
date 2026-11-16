@@ -24,6 +24,8 @@ const toClip = (r: Row): FeedClip => ({
   fileDeleted: (r.file_deleted as number) === 1,
   createdAt: r.created_at as string,
   statusChangedAt: (r.status_changed_at as string | null) ?? null,
+  profileId: (r.profile_id as string | null) ?? null,
+  profileName: (r.profile_name as string | null) ?? null,
 });
 
 const PATCH_COLUMNS: Record<string, string> = {
@@ -42,12 +44,13 @@ export function createClipRepo(db: Db) {
     insert(c: FeedClip): void {
       db.prepare(
         `INSERT INTO feed_clips (id, session_id, streamer, stream_id, epoch, start_ms, end_ms, duration_ms, bytes, triggers,
-           confidence, score, signals, status, error, mp4_path, json_path, file_deleted, created_at, status_changed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           confidence, score, signals, status, error, mp4_path, json_path, file_deleted, created_at, status_changed_at, profile_id, profile_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         c.id, c.sessionId, c.streamer, c.streamId, c.epoch, c.startMs, c.endMs, c.durationMs, c.bytes,
         JSON.stringify(c.triggers), c.confidence, c.score, JSON.stringify(c.signals), c.status, c.error,
         c.mp4Path, c.jsonPath, c.fileDeleted ? 1 : 0, c.createdAt, c.statusChangedAt,
+        c.profileId, c.profileName,
       );
     },
     get(id: string): FeedClip | null {

@@ -31,7 +31,7 @@ const clip = (id: string, over: Partial<FeedClip> = {}): FeedClip => ({
   bytes: FILE.length, triggers: ['laugh'], confidence: 'normal', score: 0.8,
   signals: { chatSpike: 3, laughShare: 0.5, reactionShare: 0.1, deltaDb: 6 },
   status: 'new', error: null, mp4Path: '', jsonPath: '/x/y.json', fileDeleted: false,
-  createdAt: '2026-11-15T10:00:00.000Z', statusChangedAt: null, ...over,
+  createdAt: '2026-11-15T10:00:00.000Z', statusChangedAt: null, profileId: null, profileName: null, ...over,
 });
 
 let root: string;

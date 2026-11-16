@@ -14,7 +14,7 @@ const clip = (id: string, over: Partial<FeedClip> = {}): FeedClip => ({
   bytes: 100, triggers: ['laugh'], confidence: 'normal', score: 0.8,
   signals: { chatSpike: 3, laughShare: 0.5, reactionShare: 0.1, deltaDb: 6 },
   status: 'rejected', error: null, mp4Path: `/c/${id}.mp4`, jsonPath: `/c/${id}.json`, fileDeleted: false,
-  createdAt: iso(100), statusChangedAt: iso(30), ...over,
+  createdAt: iso(100), statusChangedAt: iso(30), profileId: null, profileName: null, ...over,
 });
 
 let clips: ReturnType<typeof createClipRepo>;

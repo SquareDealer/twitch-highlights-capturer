@@ -161,7 +161,7 @@ it('marks clips left pending by a previous run as error', async () => {
     id: 'old', sessionId: 's0', streamer: 'alice', streamId: '1', epoch: 0, startMs: 0, endMs: 1000, durationMs: 0, bytes: 0,
     triggers: ['laugh'], confidence: 'normal', score: 0.5, signals: { chatSpike: 0, laughShare: 0, reactionShare: 0, deltaDb: 0 },
     status: 'pending', error: null, mp4Path: join(root, 'x.mp4'), jsonPath: join(root, 'x.json'), fileDeleted: false,
-    createdAt: '2026-11-15T10:00:00.000Z', statusChangedAt: null,
+    createdAt: '2026-11-15T10:00:00.000Z', statusChangedAt: null, profileId: null, profileName: null,
   };
   createClipRepo(db).insert(leftover);
   db.prepare("INSERT INTO buffer_segments (session_id, epoch, seq, path, start_ms, end_ms, bytes, completed_at_wall_ms) VALUES ('s0', 0, 0, 'x', 0, 2000, 1, 0)").run();
