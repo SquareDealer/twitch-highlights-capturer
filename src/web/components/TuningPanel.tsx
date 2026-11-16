@@ -11,7 +11,10 @@ import { Sparkline } from './Sparkline';
 
 const shareOf = (f: DetectorSignals) => f.detail?.chat.triggerShare ?? f.triggerShare ?? 0;
 
-export function TuningPanel({ stream, profile, liveEntries }: { stream: StreamStatus; profile: Profile | undefined; liveEntries: TuningEntry[] }) {
+/** `streams`: every running stream, so the editor names all that use the profile. */
+export function TuningPanel({ stream, streams, profile, liveEntries }: {
+  stream: StreamStatus; streams: StreamStatus[]; profile: Profile | undefined; liveEntries: TuningEntry[];
+}) {
   const [frames, setFrames] = useState<DetectorSignals[]>([]);
   const [history, setHistory] = useState<TuningEntry[]>([]);
   const [editing, setEditing] = useState(false);
@@ -128,7 +131,7 @@ export function TuningPanel({ stream, profile, liveEntries }: { stream: StreamSt
       {profile && (
         <div>
           <button type="button" onClick={() => setEditing((v) => !v)}>Изменить профиль</button>
-          {editing && <ProfileEditor key={profile.id} profile={profile} streams={[stream]} />}
+          {editing && <ProfileEditor key={profile.id} profile={profile} streams={streams} />}
         </div>
       )}
     </div>

@@ -37,7 +37,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 it('loads the history and shows the conditions, the verdict and the log', async () => {
-  render(<TuningPanel stream={stream()} profile={profile} liveEntries={[]} />);
+  render(<TuningPanel stream={stream()} streams={[stream()]} profile={profile} liveEntries={[]} />);
   expect(mocks.tuning).toHaveBeenCalledWith('s1');
   expect(screen.getByText('доля активных')).toBeTruthy();
   expect(screen.getByText('не сработало: не хватает доли')).toBeTruthy();
@@ -45,7 +45,7 @@ it('loads the history and shows the conditions, the verdict and the log', async 
 });
 
 it('marks failed conditions', () => {
-  render(<TuningPanel stream={stream()} profile={profile} liveEntries={[]} />);
+  render(<TuningPanel stream={stream()} streams={[stream()]} profile={profile} liveEntries={[]} />);
   expect(screen.getByText('доля активных').parentElement!.className).toContain('bad');
   expect(screen.getByText('авторов').parentElement!.className).toContain('ok');
   expect(screen.getByText('прогрев').parentElement!.className).toContain('ok');
@@ -53,7 +53,7 @@ it('marks failed conditions', () => {
 
 it('adds live entries on top without duplicates', async () => {
   const live: TuningEntry = { at: '2026-11-16T10:00:05', kind: 'profile', name: 'Крупный канал', version: 2, badPatterns: [] };
-  const { container } = render(<TuningPanel stream={stream()} profile={profile} liveEntries={[near, live]} />);
+  const { container } = render(<TuningPanel stream={stream()} streams={[stream()]} profile={profile} liveEntries={[near, live]} />);
   await screen.findByText('применён профиль «Крупный канал»');
   const rows = [...container.querySelectorAll('.log-entry')].map((r) => r.textContent ?? '');
   expect(rows).toHaveLength(2);
@@ -62,18 +62,18 @@ it('adds live entries on top without duplicates', async () => {
 });
 
 it('waits for detector data', () => {
-  render(<TuningPanel stream={stream(null)} profile={profile} liveEntries={[]} />);
+  render(<TuningPanel stream={stream(null)} streams={[stream(null)]} profile={profile} liveEntries={[]} />);
   expect(screen.getByText('ждём данные детектора…')).toBeTruthy();
 });
 
 it('draws two sparklines with the thresholds of the profile', () => {
-  render(<TuningPanel stream={stream()} profile={profile} liveEntries={[]} />);
+  render(<TuningPanel stream={stream()} streams={[stream()]} profile={profile} liveEntries={[]} />);
   expect(screen.getByLabelText('доля').querySelector('.threshold')).toBeTruthy();
   expect(screen.getByLabelText('скорость').querySelector('.threshold')).toBeTruthy();
 });
 
 it('opens the editor of the stream profile', () => {
-  render(<TuningPanel stream={stream()} profile={profile} liveEntries={[]} />);
+  render(<TuningPanel stream={stream()} streams={[stream()]} profile={profile} liveEntries={[]} />);
   expect(screen.queryByLabelText('Название')).toBeNull();
   fireEvent.click(screen.getByText('Изменить профиль'));
   expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('Крупный канал');

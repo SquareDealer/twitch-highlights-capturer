@@ -108,7 +108,7 @@ export function Streams({
         </label>
         {error && <div className="error">{error}</div>}
       </div>
-      {streams.length === 0 ? <p className="muted empty">Сейчас ничего не записывается</p> : streams.map((s) => <StreamCard key={s.id} stream={s} profiles={profiles} liveEntries={tuningLive[s.id] ?? []} />)}
+      {streams.length === 0 ? <p className="muted empty">Сейчас ничего не записывается</p> : streams.map((s) => <StreamCard key={s.id} stream={s} streams={streams} profiles={profiles} liveEntries={tuningLive[s.id] ?? []} />)}
     </section>
   );
 }

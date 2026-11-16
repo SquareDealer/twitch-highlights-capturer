@@ -26,7 +26,9 @@ function Meter({ label, value, max }: { label: string; value: number; max: numbe
   );
 }
 
-export function StreamCard({ stream, profiles, liveEntries }: { stream: StreamStatus; profiles: Profile[]; liveEntries: TuningEntry[] }) {
+export function StreamCard({ stream, streams, profiles, liveEntries }: {
+  stream: StreamStatus; streams: StreamStatus[]; profiles: Profile[]; liveEntries: TuningEntry[];
+}) {
   const [tuning, setTuning] = useState(() => tuningStored(stream.channel));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -61,6 +63,7 @@ export function StreamCard({ stream, profiles, liveEntries }: { stream: StreamSt
           ))}
         </select>
         {stream.profileApplied < stream.profileVersion && <span className="muted">применяется…</span>}
+        {stream.profileError !== undefined && <span className="badge warn" title={stream.profileError}>профиль не применён</span>}
         <span className={`badge ${stream.state === 'ERROR' ? 'bad' : stream.state === 'RECORDING' ? 'ok' : ''}`}>{stateText}</span>
         {!stream.detector.running && <span className="badge warn">детектор не работает</span>}
         {!stream.detector.running && stream.detector.lastError && (
@@ -90,7 +93,7 @@ export function StreamCard({ stream, profiles, liveEntries }: { stream: StreamSt
         </label>
       </div>
       {error && <div className="error">{error}</div>}
-      {tuning && <TuningPanel stream={stream} profile={profiles.find((x) => x.id === stream.profile.id)} liveEntries={liveEntries} />}
+      {tuning && <TuningPanel stream={stream} streams={streams} profile={profiles.find((x) => x.id === stream.profile.id)} liveEntries={liveEntries} />}
     </article>
   );
 }

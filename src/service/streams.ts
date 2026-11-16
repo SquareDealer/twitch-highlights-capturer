@@ -34,6 +34,8 @@ export interface StreamStatus {
   /** DetectorConfigState.applied */
   profileApplied: number;
   profileBadPatterns: string[];
+  /** DetectorConfigState.error: the detector refused the last config and runs on other values. */
+  profileError?: string;
 }
 
 export interface StreamRegistryDeps {
@@ -412,6 +414,7 @@ export class StreamRegistry extends EventEmitter {
       profileVersion: config.sent,
       profileApplied: config.applied,
       profileBadPatterns: config.badPatterns,
+      ...(config.error !== undefined ? { profileError: config.error } : {}),
     };
   }
 

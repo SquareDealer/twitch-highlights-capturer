@@ -131,3 +131,23 @@ it('remembers the tuning switch per channel', async () => {
   view({ streams: [stream()] });
   expect(await screen.findByText('Журнал')).toBeTruthy();
 });
+
+it('the editor opened from the tuning panel names every stream on the profile', async () => {
+  localStorage.setItem('hl.tuning.shroud', '1');
+  view({ streams: [stream(), stream({ id: 's2', channel: 'xqc' })] });
+  await screen.findByText('Журнал');
+  fireEvent.click(screen.getByText('Изменить профиль'));
+  expect(screen.getByText('Изменения сразу подействуют на эфиры: shroud, xqc')).toBeTruthy();
+});
+
+it('warns when the detector refused the profile', () => {
+  view({ streams: [stream({ profileError: 'bad value' })] });
+  const badge = screen.getByText('профиль не применён');
+  expect(badge.className).toContain('warn');
+  expect(badge.getAttribute('title')).toBe('bad value');
+});
+
+it('shows no profile warning without an error', () => {
+  view({ streams: [stream()] });
+  expect(screen.queryByText('профиль не применён')).toBeNull();
+});

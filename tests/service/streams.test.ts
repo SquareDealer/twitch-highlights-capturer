@@ -44,6 +44,7 @@ class FakeDetector extends EventEmitter {
   configs: unknown[] = [];
   applied = 0;
   badPatterns: string[] = [];
+  error: string | undefined;
   /** How many configs had been sent when start() was called. */
   configsAtStart = -1;
   constructor(readonly channel: string, private readonly log: string[]) {
@@ -61,7 +62,7 @@ class FakeDetector extends EventEmitter {
     return this.configs.length;
   }
   configState() {
-    return { sent: this.configs.length, applied: this.applied, badPatterns: this.badPatterns };
+    return { sent: this.configs.length, applied: this.applied, badPatterns: this.badPatterns, ...(this.error !== undefined ? { error: this.error } : {}) };
   }
   health(): DetectorHealth {
     return { running: this.started && !this.stopped, chat: 'unknown', restarts: 0 };
@@ -484,5 +485,15 @@ describe('profiles', () => {
     d.applied = 1;
     d.badPatterns = ['(('];
     expect(registry.list()[0]).toMatchObject({ profileVersion: 1, profileApplied: 1, profileBadPatterns: ['(('] });
+  });
+
+  it('status carries the error of a refused config', async () => {
+    const s = await startOk('twitch.tv/alice');
+    expect(s.profileError).toBeUndefined();
+    const d = detectors.get('alice')!;
+    d.applied = 1;
+    d.error = 'bad value';
+    d.emit('config', { sent: 1, applied: 1, badPatterns: [], error: 'bad value' });
+    expect(registry.list()[0]).toMatchObject({ profileApplied: 1, profileError: 'bad value' });
   });
 });
