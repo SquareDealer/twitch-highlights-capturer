@@ -1,5 +1,9 @@
 import type { FeedClip, ClipStatus } from '../service/types';
 import type { StreamStatus } from '../service/streams';
+import type { Profile } from '../service/profiles';
+import type { ProfileSettings } from '../service/profileSettings';
+import type { TuningEntry } from '../service/tuningLog';
+import type { DetectorSignals } from '../service/detectorProcess';
 
 export type PublicClip = Omit<FeedClip, 'mp4Path' | 'jsonPath'>;
 
@@ -13,6 +17,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly path?: string,
   ) {
     super(message);
   }
@@ -30,6 +35,7 @@ export interface AppState {
   streams: StreamStatus[];
   mode: ModeState;
   cutting: CuttingState;
+  profiles: Profile[];
 }
 export interface Notice {
   level: 'info' | 'warning' | 'error';
@@ -56,8 +62,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!res.ok) {
     if (res.status === 401 && path !== '/api/login') onUnauthorized?.();
-    const message = (data as { error?: string } | null)?.error;
-    throw new ApiError(res.status, message ?? `Ошибка сервера (${res.status})`);
+    const body = data as { error?: string; path?: string } | null;
+    throw new ApiError(res.status, body?.error ?? `Ошибка сервера (${res.status})`, body?.path);
   }
   return data as T;
 }
@@ -66,10 +72,21 @@ export const api = {
   login: (password: string) => request<void>('POST', '/api/login', { password }),
   logout: () => request<void>('POST', '/api/logout'),
   state: () => request<AppState>('GET', '/api/state'),
-  probe: (url: string) => request<{ channel: string; qualities: string[] }>('POST', '/api/probe', { url }),
-  startStream: (url: string, quality: string) => request<StreamStatus>('POST', '/api/streams', { url, quality }),
+  probe: (url: string) => request<{ channel: string; qualities: string[]; profileId: string }>('POST', '/api/probe', { url }),
+  startStream: (url: string, quality: string, profileId?: string) =>
+    request<StreamStatus>('POST', '/api/streams', { url, quality, ...(profileId !== undefined ? { profileId } : {}) }),
   stopStream: (id: string) => request<void>('DELETE', `/api/streams/${encodeURIComponent(id)}`),
   manualClip: (id: string) => request<PublicClip>('POST', `/api/streams/${encodeURIComponent(id)}/manual-clip`),
+  profiles: () => request<Profile[]>('GET', '/api/profiles'),
+  createProfile: (name: string, copyFrom?: string) =>
+    request<Profile>('POST', '/api/profiles', { name, ...(copyFrom !== undefined ? { copyFrom } : {}) }),
+  updateProfile: (id: string, patch: { name?: string; settings?: ProfileSettings }) =>
+    request<Profile>('PUT', `/api/profiles/${encodeURIComponent(id)}`, patch),
+  deleteProfile: (id: string) => request<void>('DELETE', `/api/profiles/${encodeURIComponent(id)}`),
+  setStreamProfile: (streamId: string, profileId: string) =>
+    request<StreamStatus>('PUT', `/api/streams/${encodeURIComponent(streamId)}/profile`, { profileId }),
+  tuning: (streamId: string) =>
+    request<{ frames: DetectorSignals[]; entries: TuningEntry[] }>('GET', `/api/streams/${encodeURIComponent(streamId)}/tuning`),
   setMode: (multiStream: boolean) => request<ModeState>('PUT', '/api/mode', { multiStream }),
   clips: (query: { streamer?: string; status?: ClipStatus; limit?: number } = {}) => {
     const q = new URLSearchParams();
@@ -88,6 +105,8 @@ export interface SubscribeHandlers {
   open?: () => void;
   notice?: (n: Notice) => void;
   cutting?: (c: CuttingState) => void;
+  profiles?: (p: Profile[]) => void;
+  tuning?: (e: { streamId: string; entry: TuningEntry }) => void;
   unauthorized?: () => void;
 }
 
@@ -113,6 +132,8 @@ export function subscribe(h: SubscribeHandlers): () => void {
     on('clip', h.clip);
     on('notice', h.notice);
     on('cutting', h.cutting);
+    on('profiles', h.profiles);
+    on('tuning', h.tuning);
     // Every open, the first one included: anything that changed between the initial load and the
     // subscription (or during a reconnect) is not replayed by the server, so the caller refetches.
     es.onopen = () => h.open?.();

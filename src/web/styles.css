@@ -54,3 +54,21 @@ button.link { background: none; border: none; color: var(--muted); padding: 4px;
 .clip-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
 .status-label { margin-left: auto; color: var(--muted); font-size: 13px; }
 @media (min-width: 700px) { .clip { grid-template-columns: 300px 1fr; } }
+.profiles { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.profile-list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.profile-main { min-width: 0; }
+button.profile-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+button.profile-item.on { border-color: var(--accent); background: var(--card); }
+button.danger-btn { color: var(--bad); }
+input[type=text], textarea {
+  background: #0e0f13; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font: inherit; min-width: 0;
+}
+textarea { width: 100%; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.profile-editor fieldset.card { margin: 0 0 12px; }
+.profile-editor legend { color: var(--muted); padding: 0 6px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.field-input { display: flex; gap: 8px; align-items: center; }
+.field-input input { width: 140px; }
+.field .hint { font-size: 13px; }
+.field .error { margin-top: 0; font-size: 14px; }
+@media (min-width: 700px) { .profiles { grid-template-columns: 220px 1fr; } }

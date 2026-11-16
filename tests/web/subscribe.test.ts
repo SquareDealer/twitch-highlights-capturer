@@ -39,3 +39,21 @@ it('a 401 from a regular call fires the unauthorized hook, but a failed login do
   await expect(api.login('p')).rejects.toBeInstanceOf(ApiError);
   expect(hook).toHaveBeenCalledTimes(1);
 });
+
+it('delivers profiles and tuning events', () => {
+  const listeners = new Map<string, (e: { data: string }) => void>();
+  class ES extends FakeES {
+    override addEventListener(name?: string, fn?: (e: { data: string }) => void) {
+      if (name && fn) listeners.set(name, fn);
+    }
+  }
+  vi.stubGlobal('EventSource', ES);
+  const profiles = vi.fn();
+  const tuning = vi.fn();
+  const stop = subscribe({ profiles, tuning });
+  listeners.get('profiles')!({ data: JSON.stringify([{ id: 'p1' }]) });
+  listeners.get('tuning')!({ data: JSON.stringify({ streamId: 's1', entry: { tMs: 1 } }) });
+  expect(profiles).toHaveBeenCalledWith([{ id: 'p1' }]);
+  expect(tuning).toHaveBeenCalledWith({ streamId: 's1', entry: { tMs: 1 } });
+  stop();
+});
