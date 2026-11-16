@@ -6,6 +6,8 @@ import { createClipRepo } from './clipRepo';
 import { bufferDirProblem, defaultConfig, loadConfig, type ServiceConfig } from './config';
 import { publicClip, startHttp } from './http';
 import { Janitor } from './janitor';
+import { settingsFromConfig } from './profileSettings';
+import { ProfileService } from './profiles';
 import { StreamRegistry, type StreamRegistryDeps } from './streams';
 import type { FeedClip } from './types';
 
@@ -53,6 +55,7 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
 
   mkdirSync(cfg.dataDir, { recursive: true });
   const db = openDb(join(cfg.dataDir, 'service.sqlite'));
+  const profiles = new ProfileService(db, () => settingsFromConfig(cfg));
   const clips = createClipRepo(db);
   clips.failPending(RESTARTED);
 
@@ -67,6 +70,7 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
     config,
     configFile,
     cuttingPaused: () => janitor.state().paused,
+    profiles,
   });
 
   let http: Awaited<ReturnType<typeof startHttp>>;

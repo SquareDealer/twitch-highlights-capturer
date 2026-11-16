@@ -7,6 +7,8 @@ import { openDb, type Db } from '../../src/main/db';
 import { defaultConfig, type ServiceConfig } from '../../src/service/config';
 import type { DetectorHealth, DetectorProcess } from '../../src/service/detectorProcess';
 import { appendNearMiss } from '../../src/service/nearMissLog';
+import { settingsFromConfig } from '../../src/service/profileSettings';
+import { ProfileService, type ProfileResult } from '../../src/service/profiles';
 import { parseChannelUrl, StreamRegistry } from '../../src/service/streams';
 import type { DetectorEvent, FeedClip } from '../../src/service/types';
 import { tmpDir } from '../helpers';
@@ -39,14 +41,27 @@ class FakeDetector extends EventEmitter {
   stopped = false;
   /** Runs inside stop(), like the real detector flushing its open event on the stop frame. */
   onStop: (() => void) | null = null;
+  configs: unknown[] = [];
+  applied = 0;
+  badPatterns: string[] = [];
+  /** How many configs had been sent when start() was called. */
+  configsAtStart = -1;
   constructor(readonly channel: string, private readonly log: string[]) {
     super();
   }
   start() {
+    this.configsAtStart = this.configs.length;
     this.started = true;
   }
   attachPcm(pcm: Readable, epoch: number) {
     this.attached.push({ pcm, epoch });
+  }
+  setConfig(d: unknown) {
+    this.configs.push(d);
+    return this.configs.length;
+  }
+  configState() {
+    return { sent: this.configs.length, applied: this.applied, badPatterns: this.badPatterns };
   }
   health(): DetectorHealth {
     return { running: this.started && !this.stopped, chat: 'unknown', restarts: 0 };
@@ -68,6 +83,12 @@ let concatCalls: Array<{ segs: string[]; existed: boolean }>;
 let registry: StreamRegistry;
 let notices: Array<{ level: string; message: string }>;
 let clips: FeedClip[];
+let profiles: ProfileService;
+
+function ok<T>(r: ProfileResult<T>): T {
+  if (!r.ok) throw new Error(r.error);
+  return r.value;
+}
 
 const until = (cond: () => boolean) => vi.waitFor(() => expect(cond()).toBe(true), { timeout: 3000, interval: 5 });
 
@@ -76,8 +97,9 @@ function build(over: Partial<ServiceConfig> = {}) {
   cfg = { ...defaultConfig(dir), password: 'x', diskReserveBytes: 0, preRollMs: 0, postRollMs: 0, ...over };
   configFile = join(dir, 'config.json');
   writeFileSync(configFile, JSON.stringify({ password: 'x', port: 9000 }));
+  profiles = new ProfileService(db, () => settingsFromConfig(cfg));
   registry = new StreamRegistry({
-    db, config: () => cfg, configFile, cuttingPaused: () => false, runner,
+    db, config: () => cfg, configFile, cuttingPaused: () => false, runner, profiles,
     makeDetector: (ch) => {
       const d = new FakeDetector(ch, log);
       detectors.set(ch, d);
@@ -144,7 +166,9 @@ describe('parseChannelUrl', () => {
   it('start and probe answer with the R4 message for a VOD link', async () => {
     expect(await registry.start('https://www.twitch.tv/videos/123', 'best')).toEqual({ ok: false, error: R4 });
     expect(await registry.probe('')).toEqual({ ok: false, error: R4 });
-    expect(await registry.probe('twitch.tv/alice')).toEqual({ ok: true, value: { channel: 'alice', qualities: ['best', '720p60'] } });
+    expect(await registry.probe('twitch.tv/alice')).toEqual({
+      ok: true, value: { channel: 'alice', qualities: ['best', '720p60'], profileId: profiles.defaultProfile().id },
+    });
   });
 });
 
@@ -307,4 +331,158 @@ it('writes near-misses to the jsonl log', async () => {
   expect(readFileSync(file, 'utf8')).toBe('{"tMs":5000,"S":0.4}\n{"tMs":9000,"S":0.45}\n');
   appendNearMiss(cfg.dataDir, 'bob', { x: 1 });
   expect(readFileSync(join(cfg.dataDir, 'nearmiss', 'bob', `${day}.jsonl`), 'utf8')).toBe('{"x":1}\n');
+});
+
+describe('profiles', () => {
+  it('starts a stream on the remembered profile and sends it before the detector starts', async () => {
+    const big = ok(profiles.create('Крупный канал'));
+    profiles.remember('alice', big.id);
+    const r = await registry.start('https://twitch.tv/alice', 'best');
+    expect(r.ok && r.value.profile).toEqual({ id: big.id, name: 'Крупный канал' });
+    expect(detectors.get('alice')!.configs).toEqual([big.settings.detector]);
+    expect(detectors.get('alice')!.configsAtStart).toBe(1);
+  });
+
+  it('uses the given profile and remembers it for the channel', async () => {
+    const mine = ok(profiles.create('Свой'));
+    const r = await registry.start('https://twitch.tv/alice', 'best', mine.id);
+    expect(r.ok && r.value.profile).toEqual({ id: mine.id, name: 'Свой' });
+    expect(detectors.get('alice')!.configs).toEqual([mine.settings.detector]);
+    expect(profiles.forChannel('alice').id).toBe(mine.id);
+  });
+
+  it('refuses an unknown profile without starting anything', async () => {
+    expect(await registry.start('https://twitch.tv/alice', 'best', 'nope')).toEqual({ ok: false, error: 'Профиль не найден' });
+    expect(registry.list()).toEqual([]);
+    expect(runner.spawned).toEqual([]);
+    expect(detectors.size).toBe(0);
+    expect(profiles.forChannel('alice').isDefault).toBe(true);
+  });
+
+  it('applies a saved profile to every running stream on it and to no other', async () => {
+    build({ multiStream: true, maxStreams: 3 });
+    const other = ok(profiles.create('Другой'));
+    await registry.start('https://twitch.tv/alice', 'best');
+    await registry.start('https://twitch.tv/bob', 'best');
+    await registry.start('https://twitch.tv/carol', 'best', other.id);
+    const next = structuredClone(profiles.defaultProfile().settings);
+    next.detector.chat.minTriggerShare = 0.2;
+    ok(profiles.update(profiles.defaultProfile().id, { settings: next }));
+    expect(detectors.get('alice')!.configs.at(-1)).toEqual(next.detector);
+    expect(detectors.get('bob')!.configs).toHaveLength(2);
+    expect(detectors.get('carol')!.configs).toHaveLength(1);
+    expect(registry.list().map((s) => s.profileVersion)).toEqual([2, 2, 1]);
+  });
+
+  it('a failing listener does not break a profile update, and shutdown unsubscribes', async () => {
+    const s = await startOk('twitch.tv/alice');
+    const d = detectors.get('alice')!;
+    d.setConfig = () => {
+      throw new Error('boom');
+    };
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const next = structuredClone(profiles.defaultProfile().settings);
+    next.detector.chat.minTriggerShare = 0.2;
+    expect(profiles.update(profiles.defaultProfile().id, { settings: next }).ok).toBe(true);
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+    await registry.stop(s.id);
+    const before = profiles.listenerCount('updated');
+    await registry.shutdown();
+    expect(profiles.listenerCount('updated')).toBe(before - 1);
+  });
+
+  it('switches the profile of a running stream', async () => {
+    const other = ok(profiles.create('Другой'));
+    const s = await startOk('twitch.tv/alice');
+    expect(s.profile.name).toBe('По умолчанию');
+    const r = registry.setProfile(s.id, other.id);
+    expect(r.ok && r.value.profile).toEqual({ id: other.id, name: 'Другой' });
+    const d = detectors.get('alice')!;
+    expect(d.configs).toHaveLength(2);
+    expect(d.configs.at(-1)).toEqual(other.settings.detector);
+    expect(profiles.forChannel('alice').id).toBe(other.id);
+    expect(registry.list()[0]!.profile).toEqual({ id: other.id, name: 'Другой' });
+    feed(spawnOf('alice').epochDir, 0);
+    await until(() => registry.list()[0]!.state === 'RECORDING');
+    d.emit('event', event());
+    await until(() => clips.some((c) => c.status === 'new'));
+    expect(clips.at(-1)!.profileName).toBe('Другой');
+    expect(clips.at(-1)!.profileId).toBe(other.id);
+  });
+
+  it('reports unknown stream and unknown profile on setProfile', async () => {
+    const s = await startOk('twitch.tv/alice');
+    expect(registry.setProfile('nope', profiles.defaultProfile().id)).toEqual({ ok: false, error: 'Эфир не найден' });
+    expect(registry.setProfile(s.id, 'nope')).toEqual({ ok: false, error: 'Профиль не найден' });
+    expect(detectors.get('alice')!.configs).toHaveLength(1);
+    expect(registry.list()[0]!.profile.id).toBe(profiles.defaultProfile().id);
+  });
+
+  it('knows which profiles are in use', async () => {
+    const other = ok(profiles.create('Другой'));
+    const s = await startOk('twitch.tv/alice');
+    expect(registry.profileInUse(profiles.defaultProfile().id)).toBe(true);
+    expect(registry.profileInUse(other.id)).toBe(false);
+    await registry.stop(s.id);
+    expect(registry.profileInUse(profiles.defaultProfile().id)).toBe(false);
+  });
+
+  it('probe returns the remembered profile of the channel', async () => {
+    const big = ok(profiles.create('Крупный канал'));
+    profiles.remember('bob', big.id);
+    const r = await registry.probe('twitch.tv/bob');
+    expect(r.ok && r.value.profileId).toBe(big.id);
+    const a = await registry.probe('twitch.tv/alice');
+    expect(a.ok && a.value.profileId).toBe(profiles.defaultProfile().id);
+  });
+
+  it('keeps frames and decisions for the tuning panel and emits them', async () => {
+    const seen: any[] = [];
+    registry.on('tuning', (e) => seen.push(e));
+    const r = await registry.start('https://twitch.tv/alice', 'best');
+    const id = r.ok ? r.value.id : '';
+    const d = detectors.get('alice')!;
+    d.emit('signals', { tMs: 1000, chatSpike: 1, laughShare: 0, messages: 0, deltaDb: 0, vad: 0, warm: false });
+    d.emit('nearmiss', { epoch: 1, tMs: 2000, kind: 'chat', missing: ['share'], values: { triggerShare: 0.03 } });
+    d.applied = 1;
+    d.emit('config', { sent: 1, applied: 1, badPatterns: ['(('] });
+    const t = registry.tuning(id)!;
+    expect(t.frames).toHaveLength(1);
+    expect(t.entries.map((e) => e.kind)).toEqual(['nearmiss', 'profile']);
+    expect(t.entries[1]).toMatchObject({ name: 'По умолчанию', version: 1, badPatterns: ['(('] });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatchObject({ streamId: id, entry: { kind: 'nearmiss', missing: ['share'] } });
+    expect(registry.tuning('nope')).toBeNull();
+  });
+
+  it('logs a refused config with its error', async () => {
+    const s = await startOk('twitch.tv/alice');
+    detectors.get('alice')!.emit('config', { sent: 1, applied: 1, badPatterns: [], error: 'bad value' });
+    expect(registry.tuning(s.id)!.entries).toEqual([
+      expect.objectContaining({ kind: 'profile', version: 1, badPatterns: [], error: 'bad value' }),
+    ]);
+  });
+
+  it('logs cutter decisions', async () => {
+    const s = await startOk('twitch.tv/alice');
+    feed(spawnOf('alice').epochDir, 0);
+    await until(() => registry.list()[0]!.state === 'RECORDING');
+    detectors.get('alice')!.emit('event', event());
+    await until(() => clips.some((c) => c.status === 'new'));
+    const entries = registry.tuning(s.id)!.entries;
+    expect(entries).toEqual([
+      expect.objectContaining({ kind: 'clip', clipId: clips.at(-1)!.id, triggers: ['laugh'], scores: event().scores }),
+    ]);
+    expect(typeof entries[0]!.at).toBe('string');
+  });
+
+  it('status carries the profile versions and bad patterns', async () => {
+    const s = await startOk('twitch.tv/alice');
+    expect(s).toMatchObject({ profileVersion: 1, profileApplied: 0, profileBadPatterns: [] });
+    const d = detectors.get('alice')!;
+    d.applied = 1;
+    d.badPatterns = ['(('];
+    expect(registry.list()[0]).toMatchObject({ profileVersion: 1, profileApplied: 1, profileBadPatterns: ['(('] });
+  });
 });

@@ -29,8 +29,15 @@ class FakeRunner implements ProcessRunner {
 }
 
 class FakeDetector extends EventEmitter {
+  private sent = 0;
   start() {}
   attachPcm() {}
+  setConfig() {
+    return ++this.sent;
+  }
+  configState() {
+    return { sent: this.sent, applied: 0, badPatterns: [] };
+  }
   health(): DetectorHealth {
     return { running: true, chat: 'unknown', restarts: 0 };
   }

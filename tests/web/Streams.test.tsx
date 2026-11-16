@@ -19,6 +19,7 @@ const stream = (over: Partial<StreamStatus> = {}): StreamStatus => ({
   id: 's1', channel: 'shroud', quality: 'best', state: 'RECORDING', startedAt: '', bufferedMs: 42000, clipsCreated: 3,
   detector: { running: true, chat: 'connected', restarts: 0 },
   signals: { tMs: 0, chatSpike: 4, laughShare: 0, messages: 0, deltaDb: 10, vad: 0, warm: true },
+  profile: { id: 'p1', name: 'По умолчанию' }, profileVersion: 1, profileApplied: 1, profileBadPatterns: [],
   ...over,
 });
 const view = (p: Partial<Parameters<typeof Streams>[0]> = {}) =>

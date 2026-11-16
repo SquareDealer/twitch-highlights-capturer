@@ -10,10 +10,11 @@ import type { Db } from '../main/db';
 import { createRepos, type Repos } from '../main/db/repos';
 import { createClipRepo } from './clipRepo';
 import { saveConfigPatch, type ServiceConfig } from './config';
-import { Cutter } from './cutter';
-import { settingsFromConfig } from './profileSettings';
-import { DetectorProcess, type DetectorHealth, type DetectorSignals } from './detectorProcess';
+import { Cutter, type CutDecision } from './cutter';
+import { DetectorProcess, type DetectorConfigState, type DetectorHealth, type DetectorSignals } from './detectorProcess';
 import { appendNearMiss } from './nearMissLog';
+import type { Profile, ProfileService } from './profiles';
+import { TuningLog, type TuningEntry } from './tuningLog';
 import type { DetectorEvent, FeedClip } from './types';
 
 export interface StreamStatus {
@@ -27,6 +28,12 @@ export interface StreamStatus {
   clipsCreated: number;
   detector: DetectorHealth;
   signals: DetectorSignals | null;
+  profile: { id: string; name: string };
+  /** DetectorConfigState.sent */
+  profileVersion: number;
+  /** DetectorConfigState.applied */
+  profileApplied: number;
+  profileBadPatterns: string[];
 }
 
 export interface StreamRegistryDeps {
@@ -34,6 +41,7 @@ export interface StreamRegistryDeps {
   config: () => ServiceConfig;
   configFile: string;
   cuttingPaused: () => boolean;
+  profiles: ProfileService;
   runner?: ProcessRunner;
   makeDetector?: (channel: string) => DetectorProcess;
   concat?: ConcatFn;
@@ -49,6 +57,8 @@ export interface Notice {
 
 const NOT_A_CHANNEL = 'Это не ссылка на канал Twitch';
 const ALREADY_RECORDING = 'Этот канал уже записывается';
+const STREAM_NOT_FOUND = 'Эфир не найден';
+const PROFILE_NOT_FOUND = 'Профиль не найден';
 const LEAVE_MULTI_FIRST = 'Сначала остановите лишние эфиры: в режиме «один эфир» может идти только один';
 const limitReached = (n: number, multiStream: boolean) =>
   multiStream
@@ -84,12 +94,40 @@ interface Stream {
   session: CaptureSession;
   signals: DetectorSignals | null;
   newClips: Set<string>;
+  profileId: string;
+  tuning: TuningLog;
+}
+
+const now = () => new Date().toISOString();
+
+/** The fields of a detector near-miss the tuning panel shows; anything malformed is dropped. */
+function nearMissEntry(raw: Record<string, unknown>): TuningEntry {
+  const missing = Array.isArray(raw.missing) ? raw.missing.filter((m): m is string => typeof m === 'string') : [];
+  const values: Record<string, number> = {};
+  if (raw.values && typeof raw.values === 'object') {
+    for (const [k, v] of Object.entries(raw.values)) if (typeof v === 'number') values[k] = v;
+  }
+  return { at: now(), kind: 'nearmiss', missing, values };
+}
+
+function decisionEntry(d: CutDecision): TuningEntry {
+  const at = now();
+  const scores = d.event.scores;
+  switch (d.kind) {
+    case 'clip':
+      return { at, kind: 'clip', clipId: d.clipId, triggers: d.event.triggers, scores };
+    case 'limited':
+      return { at, kind: 'limited', scores, limit: d.limit, median: d.median };
+    case 'paused':
+      return { at, kind: 'paused', scores, reason: d.reason };
+  }
 }
 
 /**
  * All streams being recorded. Each one owns a capture manager, a ring buffer (in <bufferDir>/<sessionId>),
- * a detector process and a cutter. Events: 'streams' (StreamStatus[], at most once per second),
- * 'clip' (FeedClip), 'notice' (Notice).
+ * a detector process and a cutter. Each stream runs on an autoclip profile; saving that profile applies it
+ * to the running detector at once. Events: 'streams' (StreamStatus[], at most once per second),
+ * 'clip' (FeedClip), 'notice' (Notice), 'tuning' ({ streamId, entry: TuningEntry }).
  */
 export class StreamRegistry extends EventEmitter {
   private readonly streams = new Map<string, Stream>();
@@ -98,6 +136,22 @@ export class StreamRegistry extends EventEmitter {
   private readonly runner: ProcessRunner;
   private statusTimer: NodeJS.Timeout | null = null;
   private lastStatusAt = 0;
+  /** Runs inside ProfileService.update(): it must never throw back into the caller. */
+  private readonly onProfileUpdated = (p: Profile): void => {
+    for (const stream of this.streams.values()) {
+      if (stream.profileId !== p.id) continue;
+      try {
+        stream.detector.setConfig(p.settings.detector);
+      } catch (err) {
+        console.error(`streams: cannot apply profile ${p.id} to ${stream.channel}`, err);
+      }
+    }
+    try {
+      this.scheduleStatus(); // may emit 'streams' right here
+    } catch (err) {
+      console.error('streams: status after a profile update failed', err);
+    }
+  };
 
   constructor(private readonly deps: StreamRegistryDeps) {
     super();
@@ -106,27 +160,33 @@ export class StreamRegistry extends EventEmitter {
     this.runner = deps.runner ?? createProcessRunner(() => deps.config());
     // Rows left over from a previous run point at buffers that no longer exist.
     this.repos.segments.clear();
+    deps.profiles.on('updated', this.onProfileUpdated);
   }
 
-  async probe(url: string): Promise<Result<{ channel: string; qualities: string[] }>> {
+  async probe(url: string): Promise<Result<{ channel: string; qualities: string[]; profileId: string }>> {
     const channel = parseChannelUrl(url);
     if (!channel) return { ok: false, error: NOT_A_CHANNEL };
     try {
       const r = await this.runner.probe(channel);
-      return r.live ? { ok: true, value: { channel, qualities: r.qualities } } : { ok: false, error: 'Канал не в эфире' };
+      if (!r.live) return { ok: false, error: 'Канал не в эфире' };
+      return { ok: true, value: { channel, qualities: r.qualities, profileId: this.deps.profiles.forChannel(channel).id } };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  async start(url: string, quality: string): Promise<Result<StreamStatus>> {
+  /** Without profileId the channel's remembered profile is used (the default one if none). */
+  async start(url: string, quality: string, profileId?: string): Promise<Result<StreamStatus>> {
     const channel = parseChannelUrl(url);
     if (!channel) return { ok: false, error: NOT_A_CHANNEL };
     if ([...this.streams.values()].some((s) => s.channel === channel)) return { ok: false, error: ALREADY_RECORDING };
     const { limit, multiStream } = this.mode();
     if (this.streams.size >= limit) return { ok: false, error: limitReached(limit, multiStream) };
+    const profile = profileId === undefined ? this.deps.profiles.forChannel(channel) : this.deps.profiles.get(profileId);
+    if (!profile) return { ok: false, error: PROFILE_NOT_FOUND };
+    this.deps.profiles.remember(channel, profile.id);
 
-    const stream = this.create(channel, quality);
+    const stream = this.create(channel, quality, profile);
     const started = stream.manager.start(channel, { quality, pcm: true });
     // The session exists synchronously once start() is called; registering it now blocks duplicates.
     stream.session = stream.manager.current()!;
@@ -160,8 +220,30 @@ export class StreamRegistry extends EventEmitter {
 
   async manualClip(id: string): Promise<Result<FeedClip>> {
     const stream = this.streams.get(id);
-    if (!stream) return { ok: false, error: 'Эфир не найден' };
+    if (!stream) return { ok: false, error: STREAM_NOT_FOUND };
     return stream.cutter.manual();
+  }
+
+  /** Switches a running stream to another profile; the detector keeps its state. */
+  setProfile(streamId: string, profileId: string): Result<StreamStatus> {
+    const stream = this.streams.get(streamId);
+    if (!stream) return { ok: false, error: STREAM_NOT_FOUND };
+    const profile = this.deps.profiles.get(profileId);
+    if (!profile) return { ok: false, error: PROFILE_NOT_FOUND };
+    stream.profileId = profile.id;
+    stream.detector.setConfig(profile.settings.detector);
+    this.deps.profiles.remember(stream.channel, profile.id);
+    this.scheduleStatus();
+    return { ok: true, value: this.status(stream) };
+  }
+
+  profileInUse(profileId: string): boolean {
+    return [...this.streams.values()].some((s) => s.profileId === profileId);
+  }
+
+  /** Recent frames and entries of the stream for the tuning panel; null for an unknown stream. */
+  tuning(streamId: string): { frames: DetectorSignals[]; entries: TuningEntry[] } | null {
+    return this.streams.get(streamId)?.tuning.snapshot() ?? null;
   }
 
   list(): StreamStatus[] {
@@ -185,12 +267,13 @@ export class StreamRegistry extends EventEmitter {
   }
 
   async shutdown(): Promise<void> {
+    this.deps.profiles.off('updated', this.onProfileUpdated);
     await Promise.all([...this.streams.keys()].map((id) => this.stop(id)));
     if (this.statusTimer) clearTimeout(this.statusTimer);
     this.statusTimer = null;
   }
 
-  private create(channel: string, quality: string): Stream {
+  private create(channel: string, quality: string, profile: Profile): Stream {
     const cfg = this.deps.config();
     let manager: CaptureSessionManager | null = null;
     const ring = new RingBufferManager({
@@ -207,8 +290,7 @@ export class StreamRegistry extends EventEmitter {
       session: () => manager!.current() ?? stream.session,
       concat: this.deps.concat,
       paused: this.deps.cuttingPaused,
-      // Placeholder: Task 7 replaces it with the stream's real profile.
-      profile: () => ({ id: 'default', name: 'По умолчанию', isDefault: true, settings: settingsFromConfig(this.deps.config()), createdAt: '', updatedAt: '' }),
+      profile: () => this.profileOf(stream),
     });
     manager = new CaptureSessionManager({
       runner: this.runner,
@@ -233,6 +315,8 @@ export class StreamRegistry extends EventEmitter {
       session: null as unknown as CaptureSession, // set right after manager.start() is called
       signals: null,
       newClips: new Set(),
+      profileId: profile.id,
+      tuning: new TuningLog(),
     };
 
     manager.on('state', (s: CaptureSession | null) => {
@@ -251,15 +335,24 @@ export class StreamRegistry extends EventEmitter {
     });
     detector.on('signals', (s: DetectorSignals) => {
       stream.signals = s;
+      stream.tuning.addFrame(s);
       this.scheduleStatus();
     });
     detector.on('health', () => this.scheduleStatus());
-    detector.on('nearmiss', (entry: object) => {
+    detector.on('nearmiss', (entry: Record<string, unknown>) => {
       try {
         appendNearMiss(this.deps.config().dataDir, channel, entry);
       } catch (err) {
         console.error(`streams: cannot write near-miss for ${channel}`, err);
       }
+      this.logTuning(stream, nearMissEntry(entry));
+    });
+    detector.on('config', (state: DetectorConfigState) => {
+      this.logTuning(stream, {
+        at: now(), kind: 'profile', name: this.profileOf(stream).name, version: state.applied, badPatterns: state.badPatterns,
+        ...(state.error !== undefined ? { error: state.error } : {}),
+      });
+      this.scheduleStatus();
     });
 
     cutter.on('clip', (clip: FeedClip) => {
@@ -268,9 +361,22 @@ export class StreamRegistry extends EventEmitter {
       this.scheduleStatus();
     });
     cutter.on('paused', ({ reason }: { reason: string }) => this.emit('notice', { level: 'warning', message: reason } satisfies Notice));
+    cutter.on('decision', (d: CutDecision) => this.logTuning(stream, decisionEntry(d)));
 
+    // The profile goes out first: the detector must never run a moment on anything else.
+    detector.setConfig(profile.settings.detector);
     detector.start();
     return stream;
+  }
+
+  /** The stream's current profile; the default one if it is gone. */
+  private profileOf(stream: Stream): Profile {
+    return this.deps.profiles.get(stream.profileId) ?? this.deps.profiles.defaultProfile();
+  }
+
+  private logTuning(stream: Stream, entry: TuningEntry): void {
+    stream.tuning.addEntry(entry);
+    this.emit('tuning', { streamId: stream.session.id, entry });
   }
 
   private defaultDetector(channel: string): DetectorProcess {
@@ -289,6 +395,8 @@ export class StreamRegistry extends EventEmitter {
 
   private status(s: Stream): StreamStatus {
     const session = s.manager.current() ?? s.session;
+    const profile = this.profileOf(s);
+    const config = s.detector.configState();
     return {
       id: session.id,
       channel: s.channel,
@@ -300,6 +408,10 @@ export class StreamRegistry extends EventEmitter {
       clipsCreated: s.newClips.size,
       detector: s.detector.health(),
       signals: s.signals,
+      profile: { id: profile.id, name: profile.name },
+      profileVersion: config.sent,
+      profileApplied: config.applied,
+      profileBadPatterns: config.badPatterns,
     };
   }
 
