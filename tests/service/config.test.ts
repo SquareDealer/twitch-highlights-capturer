@@ -13,6 +13,17 @@ afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 const write = (o: unknown) => fs.writeFileSync(file, JSON.stringify(o));
 
 describe('service config', () => {
+  it('ignores unknown detector keys', () => {
+    write({ password: 'x', detector: { chat: { someOldKey: 3 }, oldSection: { C: 1 } } });
+    const cfg = loadConfig(file, dir);
+    expect(cfg.detector.chat.minTriggerShare).toBe(0.05);
+    expect((cfg.detector.chat as unknown as Record<string, unknown>).someOldKey).toBeUndefined();
+  });
+
+  it('has the new score defaults', () => {
+    expect(defaultConfig('D:/d').detector.score).toEqual({ shareFull: 0.3, spikeFull: 6, audioMinDb: 10, audioFullDb: 20 });
+  });
+
   it('defaults match the spec', () => {
     const c = defaultConfig('D:/d');
     expect(c.detector.chat.massSpike).toBe(6);

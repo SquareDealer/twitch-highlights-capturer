@@ -149,3 +149,53 @@ def test_classify_pathological_is_fast():
 def test_digits_ascii_only():
     assert classify("12", CFG) == "interactive"
     assert classify("١٢", CFG) == "unknown"
+
+
+def _window(a, texts, now=100_000):
+    for i, (u, t) in enumerate(texts):
+        a.add(ChatMessage(now - 1000 - i, u, t))
+    return a.tick(now)
+
+
+def test_trigger_counts_laugh_and_reaction():
+    a = ChatAnalyzer(CFG)
+    f = _window(a, [("u0", "ахах"), ("u1", "KEKW"), ("u2", "НЕЕЕТ"), ("u3", "wtf"), ("u4", "привет"), ("u5", "1")])
+    assert f.trigger_messages == 4
+    assert f.laugh_messages == 2
+    assert f.reaction_messages == 2
+    assert f.trigger_authors == 4
+
+
+def test_active_authors_over_300s():
+    a = ChatAnalyzer(CFG)
+    now = 400_000
+    for i in range(30):
+        a.add(ChatMessage(now - 200_000 - i * 1000, f"old{i}", "привет"))
+    for i in range(5):
+        a.add(ChatMessage(now - 310_000 - i, f"gone{i}", "привет"))
+    for i in range(4):
+        a.add(ChatMessage(now - 1000 - i, f"old{i}", "ахах"))
+    f = a.tick(now)
+    assert f.active_authors == 30
+    assert f.trigger_share == f.trigger_authors / 30
+
+
+def test_active_authors_floor():
+    a = ChatAnalyzer(CFG)
+    f = _window(a, [("a", "хаха"), ("a", "хаха"), ("b", "хаха"), ("b", "хаха")])
+    assert f.active_authors == 10
+    assert f.trigger_share == 0.2
+
+
+def test_one_author_counts_once():
+    a = ChatAnalyzer(CFG)
+    f = _window(a, [("solo", "ахах")] * 5)
+    assert f.trigger_messages == 5
+    assert f.trigger_authors == 1
+
+
+def test_interactive_is_not_trigger():
+    a = ChatAnalyzer(CFG)
+    f = _window(a, [(f"u{i}", "1") for i in range(10)])
+    assert f.trigger_messages == 0
+    assert f.trigger_share == 0.0

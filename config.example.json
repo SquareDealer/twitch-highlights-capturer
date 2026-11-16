@@ -35,6 +35,11 @@
       "massReactionShare": 0.2,
       "repeatShare": 0.6,
       "endSpike": 1.5,
+      "activeWindowS": 300,
+      "minActive": 10,
+      "minTriggerMessages": 3,
+      "minTriggerAuthors": 2,
+      "minTriggerShare": 0.05,
       "laughWords": [
         "^[ах]*ха[ах]*$",
         "^[ah]*ha[ah]*$",
@@ -93,6 +98,12 @@
       "voiceWindowS": 20,
       "mergeGapS": 10,
       "maxEventS": 60
+    },
+    "score": {
+      "shareFull": 0.3,
+      "spikeFull": 6,
+      "audioMinDb": 10,
+      "audioFullDb": 20
     },
     "weights": {
       "C": 0.35,

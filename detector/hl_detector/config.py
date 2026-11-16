@@ -5,6 +5,7 @@ import json
 DEFAULTS: dict = {
     "chat": {
         "windowS": 5, "baselineS": 300, "alpha": 1, "minMessages": 8, "minAuthors": 5,
+        "activeWindowS": 300, "minActive": 10, "minTriggerMessages": 3, "minTriggerAuthors": 2, "minTriggerShare": 0.05,
         "laughSpike": 3, "laughShare": 0.3, "massSpike": 6, "massMinMessages": 15, "massMinAuthors": 10,
         "massReactionShare": 0.2, "repeatShare": 0.6, "endSpike": 1.5,
         "laughWords": [
@@ -21,13 +22,17 @@ DEFAULTS: dict = {
         "triggerDb": 15, "triggerVad": 0.7, "triggerMinMs": 500,
     },
     "events": {"warmupS": 60, "lookbackS": 20, "chatLagS": 8, "voiceWindowS": 20, "mergeGapS": 10, "maxEventS": 60},
+    "score": {"shareFull": 0.3, "spikeFull": 6, "audioMinDb": 10, "audioFullDb": 20},
     "weights": {"C": 0.35, "E": 0.25, "U": 0.2, "A": 0.2},
 }
 
 
 def _merge(base: dict, over: dict) -> dict:
+    """Merge `over` onto `base`, ignoring keys absent from `base` (stale user config)."""
     out = copy.deepcopy(base)
     for k, v in over.items():
+        if k not in base:
+            continue
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _merge(out[k], v)
         else:
