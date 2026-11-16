@@ -140,11 +140,21 @@ the last ~9 min. Chat on recrent was slow (0–4 messages/s).
 
 ## Profiles and tuning mode
 
-Live check to perform (`npm run service:build`, `npm run service`, sign in, start a stream of any live channel). Record the results below each step.
+Live check, 2026-11-16, head 7777c43. A separate instance was used so the working data stayed untouched:
+`HL_CONFIG`/`HL_DATA` pointed at a scratch folder (copy of `config.json`, port 8099, `diskReserveBytes` 0).
+Steps 1–2 and 4–6 were driven through the HTTP API with a script, step 3 and the look of the pages in the browser.
+Channels: gaules (quiet chat at the time), then fps_shaka (active chat), quality 160p30.
 
-- [ ] 1. The «Профили» tab has «По умолчанию» with the values from `config.json`.
-- [ ] 2. Create a copy «Тест», select it on the stream card: «применяется…» disappears within 1–2 s, the log shows `применён профиль «Тест»`.
-- [ ] 3. Switch «Настройка» on: the values refresh once a second, the charts grow.
-- [ ] 4. Change «Доля активных, не меньше» to 0,5 and save: the threshold in the condition row and the line on the chart change within 1–2 s; the «детектор не работает» badge never appeared, the warm-up in the panel did not start over.
-- [ ] 5. Put the pattern `^([ах]+)+$` into «Смех»: saving is rejected with an explanation.
-- [ ] 6. Stop the stream, delete «Тест», probe the channel again: the start form preselects «По умолчанию».
+- [x] 1. The «Профили» tab has «По умолчанию» with the values from `config.json` (`minTriggerShare` 0.05, `preRollMs` 15000). The start-up log prints the one-time notice about the profile.
+- [x] 2. Copy «Тест» created and selected on the running stream: status went `profileVersion` 2 / `profileApplied` 1, the detector confirmed version 2 after 1.3 s (`detail.configVersion` 2), the log shows `применён профиль «Тест»`.
+- [x] 3. «Настройка» on: the four condition rows, the chat/sound/score lines refresh every second, both charts draw with their threshold lines, the log lists the entries.
+- [x] 4. «Доля активных, не меньше» changed to 0.5 and saved: the detector confirmed version 3 after 0.8 s; detector restarts 0, `running` true, `sinceStartMs` went on 77 s → 79 s, chat and audio warm-up stayed `true`.
+- [x] 5. Pattern `^([ах]+)+$` in «Смех»: 400 «шаблон может подвесить детектор (повторение после скобок или обратная ссылка)», path `detector.chat.laughWords`.
+- [x] 6. Stream stopped, «Тест» deleted (204), probe of the channel returns the id of «По умолчанию».
+
+End to end on fps_shaka (profile loosened on the running stream: 1 message, 1 author, share 0.001, extra laugh patterns):
+the config was applied at second ~20 without a reset (the chat baseline kept growing 2 → 4.5), the trigger fired at
+second 42 on one laugh message, the event stayed open while the chat speed was above `endSpike` (peak ×7.7), a clip
+of 38 s was cut with score 4.6 (share 0.6 + speed 3), `profileName` «Тест», and the log got the `clip` entry.
+
+Seen and fixed afterwards: the sound line printed «+-48,1 дБ» for a negative difference, and «4 сообщений».
