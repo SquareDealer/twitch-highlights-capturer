@@ -4,7 +4,7 @@ import type { Profile } from '../../service/profiles';
 import type { StreamStatus } from '../../service/streams';
 import type { TuningEntry } from '../../service/tuningLog';
 import { api } from '../api';
-import { clockTime, duration, num } from '../format';
+import { clockTime, duration, num, numM, plural, signed } from '../format';
 import { conditionRows, entryText, mergeFrames, verdict } from '../tuning';
 import { ProfileEditor } from './ProfileEditor';
 import { Sparkline } from './Sparkline';
@@ -83,13 +83,13 @@ export function TuningPanel({ stream, streams, profile, liveEntries }: {
           <section>
             <h4>Чат</h4>
             <div>
-              {d.chat.messages} сообщений за {s ? num(s.detector.chat.windowS) : '—'} с · фон {num(d.chat.baseline)} · скорость ×{num(d.chat.spike)} · смех {d.chat.laughMessages} · реакции {d.chat.reactionMessages}
+              {d.chat.messages} {plural(d.chat.messages, 'сообщение', 'сообщения', 'сообщений')} за {s ? num(s.detector.chat.windowS) : '—'} с · фон {num(d.chat.baseline)} · скорость ×{num(d.chat.spike)} · смех {d.chat.laughMessages} · реакции {d.chat.reactionMessages}
             </div>
           </section>
           <section>
             <h4>Звук</h4>
             <div>
-              {num(d.audio.db)} дБ · фон {num(d.audio.baselineDb)} дБ · +{num(d.audio.deltaDb)} дБ (всплеск от +{s ? num(s.detector.audio.spikeDb) : '—'}) · голос {num(d.audio.vad, 2)} (от {s ? num(s.detector.audio.spikeVad, 2) : '—'})
+              {numM(d.audio.db)} дБ · фон {numM(d.audio.baselineDb)} дБ · {signed(d.audio.deltaDb)} дБ (всплеск от +{s ? num(s.detector.audio.spikeDb) : '—'}) · голос {num(d.audio.vad, 2)} (от {s ? num(s.detector.audio.spikeVad, 2) : '—'})
             </div>
           </section>
           <section>

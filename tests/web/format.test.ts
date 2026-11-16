@@ -1,5 +1,5 @@
 import type { FeedClip } from '../../src/service/types';
-import { clipSummary, duration, triggerLabel } from '../../src/web/format';
+import { clipSummary, duration, plural, signed, triggerLabel } from '../../src/web/format';
 
 const sig = (s: Partial<FeedClip['signals']>) => ({ signals: { chatSpike: 0, laughShare: 0, reactionShare: 0, deltaDb: 0, ...s } }) as FeedClip;
 
@@ -26,4 +26,15 @@ test('triggerLabel', () => {
 test('clipSummary shows trigger share of active chatters when present', () => {
   expect(clipSummary(sig({ chatSpike: 4, triggerShare: 0.1, triggerMessages: 6, activeAuthors: 40, laughShare: 0.5, deltaDb: 15 })))
     .toBe('чат ×4 · реакция 10 % активных · звук +15 дБ');
+});
+
+test('signed always carries a sign, minus is U+2212', () => {
+  expect(signed(7.1)).toBe('+7,1');
+  expect(signed(0)).toBe('+0');
+  expect(signed(-48.1)).toBe('−48,1');
+});
+test('plural picks the Russian form', () => {
+  const w = (n: number) => plural(n, 'сообщение', 'сообщения', 'сообщений');
+  const cases: Array<[number, string]> = [[0, 'сообщений'], [1, 'сообщение'], [2, 'сообщения'], [4, 'сообщения'], [5, 'сообщений'], [11, 'сообщений'], [12, 'сообщений'], [14, 'сообщений'], [21, 'сообщение'], [22, 'сообщения'], [25, 'сообщений']];
+  for (const [n, word] of cases) expect(w(n)).toBe(word);
 });

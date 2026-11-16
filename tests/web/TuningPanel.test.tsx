@@ -78,3 +78,18 @@ it('opens the editor of the stream profile', () => {
   fireEvent.click(screen.getByText('Изменить профиль'));
   expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('Крупный канал');
 });
+
+it('prints negative dB with the minus sign and no plus', () => {
+  const d: DetectorDetail = { ...detail, audio: { ...detail.audio, db: -78.2, baselineDb: -30.1, deltaDb: -48.1 } };
+  const { container } = render(<TuningPanel stream={stream({ tMs: 1000, chatSpike: 3, laughShare: 0, messages: 0, deltaDb: -48.1, vad: 0.5, warm: true, detail: d })} streams={[stream()]} profile={profile} liveEntries={[]} />);
+  const text = container.textContent ?? '';
+  expect(text).toContain('−78,2 дБ · фон −30,1 дБ · −48,1 дБ');
+  expect(text).not.toContain('+-');
+  expect(text).not.toContain('+−');
+});
+
+it('uses the Russian plural for the chat message count', () => {
+  const d: DetectorDetail = { ...detail, chat: { ...detail.chat, messages: 4 } };
+  const { container } = render(<TuningPanel stream={stream({ tMs: 1000, chatSpike: 3, laughShare: 0, messages: 0, deltaDb: 10, vad: 0.5, warm: true, detail: d })} streams={[stream()]} profile={profile} liveEntries={[]} />);
+  expect(container.textContent).toContain('4 сообщения за');
+});
