@@ -25,14 +25,6 @@
       "windowS": 5,
       "baselineS": 300,
       "alpha": 1,
-      "minMessages": 8,
-      "minAuthors": 5,
-      "laughSpike": 3,
-      "laughShare": 0.3,
-      "massSpike": 6,
-      "massMinMessages": 15,
-      "massMinAuthors": 10,
-      "massReactionShare": 0.2,
       "repeatShare": 0.6,
       "endSpike": 1.5,
       "activeWindowS": 300,
@@ -104,12 +96,6 @@
       "spikeFull": 6,
       "audioMinDb": 10,
       "audioFullDb": 20
-    },
-    "weights": {
-      "C": 0.35,
-      "E": 0.25,
-      "U": 0.2,
-      "A": 0.2
     }
   }
 }

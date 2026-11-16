@@ -64,19 +64,56 @@ def run(data, chat=None):
     return [json.loads(line) for line in text.splitlines()]
 
 
+def run_chat(before, msgs, after):
+    """PCM/control bytes `before`, then chat `msgs` [(seconds after the audio clock at that point, user, text)], then `after`.
+
+    The clock is constant, so a message `d` seconds after the wall clock lands `d` seconds after the last fed audio."""
+    import threading
+
+    W = 1_700_000_000_000
+    g1, g2 = threading.Event(), threading.Event()
+    chat = _ScriptedChat([("wait", g1)] + [("msg", (W + int(d * 1000), u, t)) for d, u, t in msgs] + [("set", g2)])
+    stdin = _Script([("data", before), ("set", g1), ("wait", g2), ("data", after)])
+    out = io.StringIO()
+    rc = main(["--channel", "x", "--config", CFG], stdin=stdin, stdout=out, chat=chat, vad=FakeVad(), clock=lambda: W)
+    assert rc == 0
+    return [json.loads(line) for line in out.getvalue().splitlines()]
+
+
+LAUGHS = [(1, "u%d" % i, "ахахах") for i in range(4)]
+
+
 def test_main_emits_event_for_scripted_input():
-    pcm = speech(80) + tone(-24, 0.6) + speech(12)
-    lines = run(pcm_frames(pcm) + ctl({"type": "stop"}))
+    lines = run_chat(pcm_frames(speech(80) + tone(-24, 0.6)), LAUGHS, pcm_frames(speech(12)) + ctl({"type": "stop"}))
     events = [l for l in lines if l["type"] == "event"]
-    assert events and events[0]["triggers"] == ["audio"]
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["triggers"] == ["laugh", "audio"] and ev["confidence"] == "normal"
+    assert 79_900 <= ev["startMs"] <= 80_100 and ev["triggerTimeMs"] == 82_000
+    assert set(ev["scores"]) == {"total", "share", "speed", "audio"} and 1 <= ev["scores"]["total"] <= 10
+    assert ev["signals"]["triggerMessages"] == 4 and ev["signals"]["activeAuthors"] == 10
     assert sum(1 for l in lines if l["type"] == "signals") >= 90
     assert any(l["type"] == "signals" and l["warm"] for l in lines)
 
 
+def test_main_voice_spike_without_chat_creates_no_event():
+    pcm = speech(80) + tone(-24, 0.6) + speech(12)
+    lines = run(pcm_frames(pcm) + ctl({"type": "stop"}))
+    assert [l for l in lines if l["type"] in ("event", "nearmiss")] == []
+
+
+def test_main_signals_line_has_trigger_fields():
+    lines = run_chat(pcm_frames(speech(70)), LAUGHS, pcm_frames(speech(3)) + ctl({"type": "stop"}))
+    sig = [l for l in lines if l["type"] == "signals"]
+    assert all({"triggerShare", "triggerMessages", "activeAuthors"} <= set(s) for s in sig)
+    s = [s for s in sig if s["tMs"] == 72000][0]
+    assert (s["triggerMessages"], s["activeAuthors"], s["triggerShare"]) == (4, 10, 0.4)
+    assert s["messages"] == 4 and s["laughShare"] == 1.0
+
+
 def test_main_epoch_frame_resets_timeline():
-    pcm = speech(70) + tone(-24, 0.6) + speech(3)
-    data = pcm_frames(speech(5)) + ctl({"type": "epoch", "epoch": 1}) + pcm_frames(pcm) + ctl({"type": "stop"})
-    lines = run(data)
+    before = pcm_frames(speech(5)) + ctl({"type": "epoch", "epoch": 1}) + pcm_frames(speech(70) + tone(-24, 0.6))
+    lines = run_chat(before, LAUGHS, pcm_frames(speech(3)) + ctl({"type": "stop"}))
     sig = [l for l in lines if l["type"] == "signals"]
     i = next(k for k in range(1, len(sig)) if sig[k]["tMs"] < sig[k - 1]["tMs"])
     assert sig[i]["tMs"] == 1000
@@ -185,8 +222,8 @@ def _events(lines):
 
 
 def test_epoch_start_ms_continues_the_stream_timeline():
-    pcm = speech(70) + tone(-24, 0.6) + speech(12)
-    lines = run(ctl({"type": "epoch", "epoch": 2, "startMs": 120000}) + pcm_frames(pcm) + ctl({"type": "stop"}))
+    before = ctl({"type": "epoch", "epoch": 2, "startMs": 120000}) + pcm_frames(speech(70) + tone(-24, 0.6))
+    lines = run_chat(before, LAUGHS, pcm_frames(speech(12)) + ctl({"type": "stop"}))
     sig = _sig(lines)
     assert sig[0]["tMs"] == 121000
     assert sig[-1]["tMs"] == 202000
@@ -194,9 +231,9 @@ def test_epoch_start_ms_continues_the_stream_timeline():
     assert not any(s["warm"] for s in sig if s["tMs"] < 180000)
     assert [s for s in sig if s["tMs"] == 180000][0]["warm"]
     ev = _events(lines)
-    assert ev and ev[0]["epoch"] == 2 and ev[0]["triggers"] == ["audio"]
+    assert ev and ev[0]["epoch"] == 2 and ev[0]["triggers"] == ["laugh", "audio"]
     assert 189_900 <= ev[0]["startMs"] <= 190_100
-    assert ev[0]["endMs"] >= ev[0]["startMs"] and ev[0]["triggerTimeMs"] >= 190_000
+    assert ev[0]["endMs"] >= ev[0]["startMs"] and ev[0]["triggerTimeMs"] == 192_000
 
 
 def test_epoch_without_start_ms_starts_at_zero():
@@ -206,15 +243,14 @@ def test_epoch_without_start_ms_starts_at_zero():
 
 
 def test_resync_moves_the_clock_over_the_gap():
-    after = speech(8) + tone(-24, 0.6) + speech(12)
-    data = (ctl({"type": "epoch", "epoch": 3}) + pcm_frames(speech(70)) + ctl({"type": "resync", "tMs": 200000})
-            + pcm_frames(after) + ctl({"type": "stop"}))
-    lines = run(data)
+    before = (ctl({"type": "epoch", "epoch": 3}) + pcm_frames(speech(70)) + ctl({"type": "resync", "tMs": 200000})
+              + pcm_frames(speech(8) + tone(-24, 0.6)))
+    lines = run_chat(before, LAUGHS, pcm_frames(speech(12)) + ctl({"type": "stop"}))
     ts = [s["tMs"] for s in _sig(lines)]
     assert ts[69] == 70000 and ts[70] == 201000  # no fake ticks over the gap
     assert ts[-1] == 220000
     ev = _events(lines)
-    assert ev and ev[0]["epoch"] == 3 and ev[0]["triggers"] == ["audio"]
+    assert ev and ev[0]["epoch"] == 3 and ev[0]["triggers"] == ["laugh", "audio"]
     assert 207_900 <= ev[0]["startMs"] <= 208_100
 
 
@@ -232,10 +268,11 @@ def test_resync_mid_second_discards_the_partial_block():
 
 
 def test_nearmiss_lines_carry_the_epoch():
-    pcm = speech(70) + tone(-29, 0.6) + speech(3)
-    lines = run(ctl({"type": "epoch", "epoch": 4, "startMs": 5000}) + pcm_frames(pcm) + ctl({"type": "stop"}))
+    spam = [(1, "solo", "ахахах")] * 4  # one author: not enough authors
+    before = ctl({"type": "epoch", "epoch": 4, "startMs": 5000}) + pcm_frames(speech(70))
+    lines = run_chat(before, spam, pcm_frames(speech(3)) + ctl({"type": "stop"}))
     near = [l for l in lines if l["type"] == "nearmiss"]
-    assert near and all(n["epoch"] == 4 for n in near)
+    assert near and all(n["epoch"] == 4 and n["kind"] == "chat" and n["missing"] == ["authors"] for n in near)
 
 
 def test_chat_time_translation_uses_the_shifted_audio_clock():

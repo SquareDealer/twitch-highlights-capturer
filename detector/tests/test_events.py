@@ -4,16 +4,18 @@ from hl_detector.config import DEFAULTS
 from hl_detector.events import EventAssembler
 
 
-def fr(t, spike=1.0, msgs=10, authors=8, laugh=0.0, react=0.0, rep=None, warm=True, rar=0.9, arar=0.9):
+def tf(t, msgs=4, authors=3, active=40, laugh=None, react=0, spike=1.0, warm=True):
+    """A chat frame at second t: msgs trigger messages from `authors` authors among `active` active chatters."""
+    laugh = msgs - react if laugh is None else laugh
     return ChatFrame(t_ms=t * 1000, messages=msgs, authors=authors, spike=spike, author_spike=1.0,
-                     rarity=rar, author_rarity=arar, laugh_share=laugh, reaction_share=react,
-                     repeat_class=rep, warm=warm)
+                     rarity=0.0, author_rarity=0.0, laugh_share=laugh / msgs if msgs else 0.0,
+                     reaction_share=react / msgs if msgs else 0.0, repeat_class=None, warm=warm,
+                     trigger_messages=msgs, trigger_authors=authors, laugh_messages=laugh, reaction_messages=react,
+                     active_authors=active, trigger_share=authors / active)
 
 
-def laugh_frame(t, **kw):
-    kw.setdefault("spike", 5.0)
-    kw.setdefault("laugh", 0.5)
-    return fr(t, **kw)
+def quiet(t):
+    return tf(t, msgs=0, authors=0)
 
 
 def run(frames, spikes=(), until=140, asm=None):
@@ -25,123 +27,173 @@ def run(frames, spikes=(), until=140, asm=None):
         new = [s for s in spikes if s not in delivered and s.end_ms <= now]
         delivered += new
         rec = lambda lo, hi: [s for s in delivered if s.end_ms >= lo and s.start_ms <= hi]
-        evs, nm = asm.on_tick(now, frames.get(sec, fr(sec)), new, rec)
+        evs, nm = asm.on_tick(now, frames.get(sec, quiet(sec)), new, rec)
         out += [(sec, e) for e in evs]
         near += nm
     return out, near, asm
 
 
-def laugh_run(a, b, **kw):
-    return {t: laugh_frame(t, **kw) for t in range(a, b)}
+def span(a, b, **kw):
+    return {t: tf(t, **kw) for t in range(a, b)}
 
 
-def test_laugh_trigger_creates_event_with_audio_anchor():
-    sp = VoiceSpike(100_000, 101_000, 12.0, False, 12.0)
-    out, _, _ = run(laugh_run(106, 114), [sp])
+def test_trigger_fires_on_share_and_three_messages():
+    out, _, _ = run(span(106, 110))  # 3 of 40 active = 7.5 %
     assert len(out) == 1
     sec, e = out[0]
-    assert sec == 124
     assert e.triggers == ["laugh"]
-    assert (e.estimated_event_ms, e.start_ms, e.end_ms) == (100_000, 100_000, 114_000)
-    assert e.uncertainty_ms == 2000 and e.confidence == "normal"
-    assert e.trigger_time_ms == 106_000
-
-
-def test_laugh_without_audio_uses_chat_lag_and_low_confidence():
-    out, _, _ = run(laugh_run(106, 114))
-    e = out[0][1]
+    assert e.scores == {"total": 1.5, "share": 0.5, "speed": 0.0, "audio": 0.0}
+    assert e.trigger_time_ms == 106_000 and e.end_ms == 110_000
+    # no voice spike before the chat: chat-lag anchor, low confidence
     assert e.estimated_event_ms == 98_000 and e.uncertainty_ms == 20_000 and e.confidence == "low"
+    assert sec == 120
+    j = e.to_json()
+    assert j["signals"] == {"chatSpike": 1.0, "triggerShare": 0.075, "triggerMessages": 4, "activeAuthors": 40,
+                            "laughShare": 1.0, "reactionShare": 0.0, "deltaDb": 0.0}
 
 
-def test_fast_chat_without_laughter_no_event_but_nearmiss():
-    out, near, _ = run({t: fr(t, spike=4.0) for t in range(100, 105)})
+def test_below_three_messages_no_event():
+    out, near, _ = run(span(106, 110, msgs=2, authors=2, active=4))
+    assert out == [] and near == []
+
+
+def test_one_spammer_no_event():
+    out, near, _ = run(span(106, 110, msgs=5, authors=1, active=10))
     assert out == []
-    assert near and near[0].kind == "chat" and "laugh_share" in near[0].missing
+    assert near and near[0].kind == "chat" and near[0].missing == ["authors"]
 
 
-def test_mass_reaction_without_laughter():
-    frames = {t: fr(t, spike=7, msgs=16, authors=11, react=0.5) for t in range(106, 112)}
+def test_low_share_no_event_but_nearmiss():
+    out, near, _ = run(span(106, 110, msgs=4, authors=4, active=200))
+    assert out == []
+    assert near and near[0].kind == "chat" and near[0].missing == ["share"]
+    assert near[0].values["triggerShare"] == 0.02 and near[0].values["triggerMessages"] == 4
+
+
+def test_nearmiss_is_rate_limited():
+    _, near, _ = run(span(106, 125, msgs=4, authors=4, active=200))
+    assert [n.t_ms for n in near] == [106_000, 116_000]
+
+
+def test_reaction_dominant_label():
+    out, _, _ = run(span(106, 110, msgs=5, authors=4, active=40, react=4))  # 'НЕЕЕТ'x4, 'ахах'x1
+    assert out[0][1].triggers == ["reaction"]
+
+
+def test_equal_laugh_and_reaction_is_laugh():
+    out, _, _ = run(span(106, 110, msgs=4, authors=4, active=40, react=2))
+    assert out[0][1].triggers == ["laugh"]
+
+
+def test_voice_spike_alone_never_fires():
+    out, near, _ = run({}, [VoiceSpike(100_000, 101_000, -10.0, True, 20.0)])
+    assert out == [] and near == []
+
+
+def test_audio_adds_points_and_label():
+    sp = VoiceSpike(101_000, 102_000, -20.0, True, 15.0)  # 5 s before the chat reaction
+    out, _, _ = run(span(106, 110), [sp])
+    e = out[0][1]
+    assert e.scores["audio"] == 0.5
+    assert e.triggers == ["laugh", "audio"]
+    assert e.estimated_event_ms == 101_000 == e.start_ms and e.uncertainty_ms == 2000
+    assert e.confidence == "normal"
+    assert e.signals["deltaDb"] == 15.0
+
+
+def test_weak_voice_spike_gives_no_audio_points():
+    out, _, _ = run(span(106, 110), [VoiceSpike(101_000, 102_000, -20.0, False, 9.0)])
+    e = out[0][1]
+    assert e.scores["audio"] == 0.0 and e.triggers == ["laugh"] and e.confidence == "normal"
+
+
+def test_voice_spike_outside_window_gives_no_audio_points():
+    # spike after the event ended, before it is closed by the merge gap: outside [start - 20 s, end]
+    out, _, _ = run(span(106, 110), [VoiceSpike(115_000, 116_000, -20.0, True, 20.0)])
+    e = out[0][1]
+    assert e.scores["audio"] == 0.0 and e.triggers == ["laugh"]
+
+
+def test_score_example_from_spec():
+    sp = VoiceSpike(101_000, 102_000, -20.0, True, 15.0)
+    out, _, _ = run(span(106, 110, msgs=6, authors=4, active=40, spike=4.0), [sp])
+    assert out[0][1].scores == {"total": 4.3, "share": 1.0, "speed": 1.8, "audio": 0.5}
+
+
+def test_score_caps_at_10():
+    sp = VoiceSpike(101_000, 102_000, -20.0, True, 25.0)
+    out, _, _ = run(span(106, 110, msgs=8, authors=6, active=10, spike=9.0), [sp])
+    assert out[0][1].scores == {"total": 10.0, "share": 5.0, "speed": 3.0, "audio": 1.0}
+
+
+def test_scores_take_the_event_maxima():
+    frames = {**span(106, 108, spike=2.0), **span(108, 110, msgs=6, authors=6, active=40, spike=3.5)}
     out, _, _ = run(frames)
-    assert [e.triggers for _, e in out] == [["mass"]]
-
-
-def test_mass_with_unknown_repeat_needs_voice():
-    frames = {t: fr(t, spike=7, msgs=16, authors=11, react=0.5, rep="unknown") for t in range(106, 112)}
-    out, near, _ = run(frames)
-    assert out == [] and any("voice" in n.missing for n in near)
-    out, _, _ = run(frames, [VoiceSpike(100_000, 101_000, 12.0, False, 12.0)])
-    assert len(out) == 1 and out[0][1].triggers == ["mass"]
-
-
-def test_interactive_repeat_suppresses_both_triggers():
-    frames = {t: fr(t, spike=7, msgs=16, authors=11, react=0.5, laugh=0.5, rep="interactive") for t in range(106, 112)}
-    out, near, _ = run(frames, [VoiceSpike(100_000, 101_000, 12.0, False, 12.0)])
-    assert out == []
-    assert any(n.kind == "chat" and "interactive" in n.missing for n in near)
-
-
-def test_strong_voice_spike_alone_is_low_confidence_audio_event():
-    out, _, _ = run({}, [VoiceSpike(100_000, 101_000, -10.0, True, 20.0)])
     e = out[0][1]
-    assert e.triggers == ["audio"] and e.confidence == "low"
-    assert (e.estimated_event_ms, e.start_ms, e.end_ms, e.uncertainty_ms) == (100_000, 100_000, 101_000, 1000)
-    assert e.scores["A"] == 1.0 and e.scores["S"] == 0.14
+    assert e.scores == {"total": 4.5, "share": 2.0, "speed": 1.5, "audio": 0.0}
+    assert e.signals["triggerShare"] == 0.15 and e.signals["chatSpike"] == 3.5
 
 
-def test_weak_voice_spike_is_audio_nearmiss():
-    out, near, _ = run({}, [VoiceSpike(100_000, 101_000, 12.0, False, 12.0)])
-    assert out == [] and [n.kind for n in near] == ["audio"]
-
-
-def test_events_within_10s_merge_and_collect_triggers():
-    out, _, _ = run(laugh_run(106, 114), [VoiceSpike(116_000, 117_000, 12.0, True, 12.0)])
-    assert len(out) == 1
-    e = out[0][1]
-    assert e.triggers == ["laugh", "audio"] and e.end_ms == 117_000 and e.confidence == "low"
+def test_fast_chat_keeps_the_event_open():
+    frames = {**span(106, 108), **{t: tf(t, msgs=0, authors=0, spike=2.0) for t in range(108, 112)}}
+    out, _, _ = run(frames)
+    assert len(out) == 1 and out[0][1].end_ms == 112_000
 
 
 def test_nothing_fires_during_warmup():
-    out, _, _ = run(laugh_run(10, 20), [VoiceSpike(30_000, 31_000, 20.0, True, 20.0)], until=100)
+    out, near, _ = run(span(10, 20), [VoiceSpike(15_000, 16_000, -10.0, True, 20.0)], until=100)
     assert out == []
+    assert near and near[0].missing == ["warm"]
+
+
+def test_cold_chat_frame_does_not_fire():
+    out, near, _ = run(span(106, 110, warm=False))
+    assert out == [] and near[0].missing == ["warm"]
+
+
+def test_events_merge_within_gap():
+    out, _, _ = run({**span(106, 110), **span(118, 122, react=4, msgs=4)})
+    assert len(out) == 1
+    e = out[0][1]
+    assert e.end_ms == 122_000 and e.trigger_time_ms == 106_000
+    assert e.triggers == ["laugh"]  # 4x4 laughs vs 4x4 reactions over the event
+
+
+def test_events_beyond_gap_are_separate():
+    out, _, _ = run({**span(106, 110), **span(121, 125)})
+    assert len(out) == 2
 
 
 def test_event_longer_than_max_is_closed():
-    out, _, _ = run(laugh_run(70, 200), until=210)
+    out, _, _ = run(span(70, 200), until=210)
     assert out
     assert all(e.end_ms - e.start_ms <= 60_000 for _, e in out)
-
-
-def test_score_formula():
-    frames = {t: laugh_frame(t, laugh=0.6, rar=0.8, arar=0.5) for t in range(106, 110)}
-    out, _, _ = run(frames, [VoiceSpike(100_000, 101_000, 10.0, False, 10.0)])
-    sc = out[0][1].scores
-    assert sc == {"S": 0.63, "C": 0.8, "E": 0.6, "U": 0.5, "A": 0.5}
 
 
 def test_flush_returns_open_event_and_callback():
     marks = []
     asm = EventAssembler(DEFAULTS, on_chat_spike=marks.append)
-    out, _, asm = run(laugh_run(106, 110), until=108, asm=asm)
-    assert out == [] and marks
+    out, _, asm = run(span(106, 110), until=108, asm=asm)
+    assert out == [] and marks == [106_000, 107_000, 108_000]
     evs = asm.flush()
     assert len(evs) == 1 and evs[0].to_json()["type"] == "event"
+    assert set(evs[0].to_json()["scores"]) == {"total", "share", "speed", "audio"}
     assert asm.flush() == []
 
 
-def test_realistic_audio_event_has_positive_a():
-    # absolute peak is negative dBFS; A must come from delta_db above baseline
-    sp = VoiceSpike(100_000, 101_000, -18.0, False, 12.0)
-    out, _, _ = run(laugh_run(106, 110), [sp])
-    e = out[0][1]
-    assert e.scores["A"] == 0.6 and e.signals["deltaDb"] == 12.0
-
-
 def test_set_epoch_returns_the_open_event_instead_of_dropping_it():
-    out, _, asm = run(laugh_run(106, 110), until=108)
+    out, _, asm = run(span(106, 110), until=108)
     assert out == []
     evs = asm.set_epoch(1, 0)
     assert len(evs) == 1 and evs[0].epoch == 0
     assert asm.epoch == 1 and asm.flush() == []
+
+
+def test_set_epoch_start_ms_shifts_warmup():
+    asm = EventAssembler(DEFAULTS)
+    asm.set_epoch(1, 100_000)
+    out, _, _ = run(span(106, 110), asm=asm)
+    assert out == []
 
 
 def test_on_chat_spike_exception_is_logged(caplog):
@@ -150,5 +202,5 @@ def test_on_chat_spike_exception_is_logged(caplog):
 
     asm = EventAssembler(DEFAULTS, on_chat_spike=boom)
     with caplog.at_level("WARNING", logger="hl_detector"):
-        run(laugh_run(106, 110), until=108, asm=asm)
+        run(span(106, 110), until=108, asm=asm)
     assert any("callback failed" in r.getMessage() or "callback failed" in str(r.exc_info) for r in caplog.records)

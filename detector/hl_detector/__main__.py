@@ -107,7 +107,9 @@ def main(argv=None, stdin=None, stdout=None, chat: Optional[ChatSource] = None, 
         fr = st["last"]
         emit({
             "type": "signals", "tMs": t, "chatSpike": round(frame.spike, 3), "laughShare": round(frame.laugh_share, 3),
-            "messages": frame.messages, "deltaDb": round(fr.delta_db, 3) if fr else 0.0,
+            "messages": frame.messages, "triggerShare": round(frame.trigger_share, 3),
+            "triggerMessages": frame.trigger_messages, "activeAuthors": frame.active_authors,
+            "deltaDb": round(fr.delta_db, 3) if fr else 0.0,
             "vad": round(fr.vad, 3) if fr else 0.0, "warm": t - st["start"] >= warm_ms,
         }, stdout)
         send_events(evs)

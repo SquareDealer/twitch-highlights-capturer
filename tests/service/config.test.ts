@@ -20,18 +20,26 @@ describe('service config', () => {
     expect((cfg.detector.chat as unknown as Record<string, unknown>).someOldKey).toBeUndefined();
   });
 
+  it('loads a config with removed detector keys', () => {
+    write({ password: 'x', detector: { chat: { laughSpike: 3 }, weights: { C: 1 } } });
+    const cfg = loadConfig(file, dir);
+    expect((cfg.detector.chat as unknown as Record<string, unknown>).laughSpike).toBeUndefined();
+    expect((cfg.detector as unknown as Record<string, unknown>).weights).toBeUndefined();
+    expect(cfg.detector.chat.minTriggerAuthors).toBe(2);
+  });
+
   it('has the new score defaults', () => {
     expect(defaultConfig('D:/d').detector.score).toEqual({ shareFull: 0.3, spikeFull: 6, audioMinDb: 10, audioFullDb: 20 });
   });
 
   it('defaults match the spec', () => {
     const c = defaultConfig('D:/d');
-    expect(c.detector.chat.massSpike).toBe(6);
+    expect(c.detector.chat.minTriggerMessages).toBe(3);
     expect(c.port).toBe(8080);
     expect(c.libraryDir).toBe(path.join('D:/d', 'library'));
     expect(c.bufferDir).toBe(path.join('D:/d', 'buffer'));
     expect(c.diskReserveBytes).toBe(10 * 1024 ** 3);
-    expect(c.detector.weights).toEqual({ C: 0.35, E: 0.25, U: 0.2, A: 0.2 });
+    expect((c.detector as unknown as Record<string, unknown>).weights).toBeUndefined();
     expect(c.detector.chat.laughWords).toContain('^lo+l$');
     expect(c.detector.chat.laughWords).toHaveLength(17);
     expect(c.detector.chat.reactionWords).toHaveLength(10);
@@ -51,12 +59,12 @@ describe('service config', () => {
   });
 
   it('merges file over defaults', () => {
-    write({ password: 'x', preRollMs: 20000, detector: { chat: { massSpike: 7 } } });
+    write({ password: 'x', preRollMs: 20000, detector: { chat: { minTriggerShare: 0.1 } } });
     const c = loadConfig(file, 'D:/d');
     expect(c.preRollMs).toBe(20000);
     expect(c.postRollMs).toBe(10000);
-    expect(c.detector.chat.massSpike).toBe(7);
-    expect(c.detector.chat.laughSpike).toBe(3);
+    expect(c.detector.chat.minTriggerShare).toBe(0.1);
+    expect(c.detector.chat.minTriggerMessages).toBe(3);
     expect(c.detector.audio.triggerDb).toBe(15);
   });
 

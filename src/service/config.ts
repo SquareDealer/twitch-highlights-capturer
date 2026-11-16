@@ -3,10 +3,8 @@ import path from 'node:path';
 
 export interface DetectorConfig {
   chat: {
-    windowS: number; baselineS: number; alpha: number; minMessages: number; minAuthors: number;
-    laughSpike: number; laughShare: number; massSpike: number; massMinMessages: number; massMinAuthors: number;
-    massReactionShare: number; repeatShare: number; endSpike: number;
-    activeWindowS: number; minActive: number; minTriggerMessages: number; minTriggerAuthors: number; minTriggerShare: number;
+    windowS: number; baselineS: number; alpha: number; activeWindowS: number; minActive: number;
+    minTriggerMessages: number; minTriggerAuthors: number; minTriggerShare: number; endSpike: number; repeatShare: number;
     laughWords: string[]; reactionWords: string[]; interactiveWords: string[];
   };
   audio: {
@@ -15,7 +13,6 @@ export interface DetectorConfig {
   };
   events: { warmupS: number; lookbackS: number; chatLagS: number; voiceWindowS: number; mergeGapS: number; maxEventS: number };
   score: { shareFull: number; spikeFull: number; audioMinDb: number; audioFullDb: number };
-  weights: { C: number; E: number; U: number; A: number };
 }
 
 export interface ServiceConfig {
@@ -68,10 +65,8 @@ export function defaultConfig(dataDir: string): ServiceConfig {
     offlineEndMs: 300000,
     detector: {
       chat: {
-        windowS: 5, baselineS: 300, alpha: 1, minMessages: 8, minAuthors: 5,
-        laughSpike: 3, laughShare: 0.3, massSpike: 6, massMinMessages: 15, massMinAuthors: 10,
-        massReactionShare: 0.2, repeatShare: 0.6, endSpike: 1.5,
-        activeWindowS: 300, minActive: 10, minTriggerMessages: 3, minTriggerAuthors: 2, minTriggerShare: 0.05,
+        windowS: 5, baselineS: 300, alpha: 1, activeWindowS: 300, minActive: 10,
+        minTriggerMessages: 3, minTriggerAuthors: 2, minTriggerShare: 0.05, endSpike: 1.5, repeatShare: 0.6,
         laughWords: [
           '^[ах]*ха[ах]*$', '^[ah]*ha[ah]*$', '^ору+$', '^ржу+$', '^ло+л$', '^ке+к$', '^пхп+$', '^хд+$',
           '^lo+l$', '^lmao+$', '^xd+$', '^kekw$', '^lul$', '^omegalul$', '^icant$', '😂', '🤣',
@@ -87,7 +82,6 @@ export function defaultConfig(dataDir: string): ServiceConfig {
       },
       events: { warmupS: 60, lookbackS: 20, chatLagS: 8, voiceWindowS: 20, mergeGapS: 10, maxEventS: 60 },
       score: { shareFull: 0.3, spikeFull: 6, audioMinDb: 10, audioFullDb: 20 },
-      weights: { C: 0.35, E: 0.25, U: 0.2, A: 0.2 },
     },
   };
 }

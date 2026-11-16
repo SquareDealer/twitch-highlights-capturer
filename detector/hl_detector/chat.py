@@ -112,7 +112,7 @@ class ChatAnalyzer:
 
     def _repeat_class(self, norms: list) -> Optional[str]:
         n = len(norms)
-        if n < self.c["minMessages"]:
+        if n < self.c["minTriggerMessages"]:
             return None
         counts: dict = {}
         for s in norms:
