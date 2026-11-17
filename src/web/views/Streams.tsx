@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Profile } from '../../service/profiles';
+import type { ProfileSettings } from '../../service/profileSettings';
 import type { StreamStatus } from '../../service/streams';
 import type { TuningEntry } from '../../service/tuningLog';
 import { api, type CuttingState } from '../api';
@@ -14,6 +15,7 @@ export function Streams({
   multiStream,
   cutting,
   profiles,
+  factory,
   tuningLive,
   onMode,
 }: {
@@ -21,6 +23,7 @@ export function Streams({
   multiStream: boolean;
   cutting: CuttingState;
   profiles: Profile[];
+  factory?: ProfileSettings;
   tuningLive: Record<string, TuningEntry[]>;
   onMode: (multiStream: boolean) => void;
 }) {
@@ -108,7 +111,7 @@ export function Streams({
         </label>
         {error && <div className="error">{error}</div>}
       </div>
-      {streams.length === 0 ? <p className="muted empty">Сейчас ничего не записывается</p> : streams.map((s) => <StreamCard key={s.id} stream={s} streams={streams} profiles={profiles} liveEntries={tuningLive[s.id] ?? []} />)}
+      {streams.length === 0 ? <p className="muted empty">Сейчас ничего не записывается</p> : streams.map((s) => <StreamCard key={s.id} stream={s} streams={streams} profiles={profiles} {...(factory ? { factory } : {})} liveEntries={tuningLive[s.id] ?? []} />)}
     </section>
   );
 }

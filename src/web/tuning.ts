@@ -1,4 +1,4 @@
-import { DICTIONARIES, FIELDS, type FieldDef, type ProfileSettings } from '../service/profileSettings';
+import { DICTIONARIES, FIELDS, fromDisplay, toDisplay, unsafePattern, type FieldDef, type ProfileSettings } from '../service/profileSettings';
 import type { DetectorDetail, DetectorSignals } from '../service/detectorProcess';
 import type { TuningEntry } from '../service/tuningLog';
 import { duration, num, triggerLabel } from './format';
@@ -9,11 +9,11 @@ export function parseNumber(text: string): number | null {
   return /^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(t) ? Number(t) : null;
 }
 
-/** path → text of the field; dictionaries are one pattern per line. */
+/** path → text of the field, in display units (percent, seconds); dictionaries are one pattern per line. */
 export type FormValues = Record<string, string>;
 
 const read = (root: unknown, path: string): unknown =>
-  path.split('.').reduce<unknown>((o, k) => (o as Record<string, unknown>)[k], root);
+  path.split('.').reduce<unknown>((o, k) => (typeof o === 'object' && o !== null ? (o as Record<string, unknown>)[k] : undefined), root);
 
 function write(root: Record<string, unknown>, path: string, value: unknown): void {
   const keys = path.split('.');
@@ -24,8 +24,15 @@ function write(root: Record<string, unknown>, path: string, value: unknown): voi
 
 export function toForm(s: ProfileSettings): FormValues {
   const f: FormValues = {};
-  for (const d of FIELDS) f[d.path] = num(read(s, d.path) as number, 6);
-  for (const d of DICTIONARIES) f[d.path] = (read(s, d.path) as string[]).join('\n');
+  // A value that is missing or not a number (a profile damaged by hand) shows as an empty field.
+  for (const d of FIELDS) {
+    const v = read(s, d.path);
+    f[d.path] = typeof v === 'number' && Number.isFinite(v) ? num(toDisplay(d, v), 6) : '';
+  }
+  for (const d of DICTIONARIES) {
+    const v = read(s, d.path);
+    f[d.path] = Array.isArray(v) ? v.filter((x) => typeof x === 'string').join('\n') : '';
+  }
   return f;
 }
 
@@ -35,7 +42,7 @@ export function fromForm(f: FormValues): { ok: true; value: ProfileSettings } | 
   for (const d of FIELDS) {
     const v = parseNumber(f[d.path] ?? '');
     if (v === null) return { ok: false, path: d.path, error: `«${d.label}»: нужно число` };
-    write(out, d.path, v);
+    write(out, d.path, fromDisplay(d, v));
   }
   for (const d of DICTIONARIES) {
     const text = f[d.path] ?? '';
@@ -162,4 +169,25 @@ export function clampField(def: FieldDef, v: number): number {
   if (!Number.isFinite(v)) return def.min;
   const stepped = Math.round(v / def.step) * def.step;
   return Math.min(def.max, Math.max(def.min, Number(stepped.toFixed(6))));
+}
+
+/** Detector's normalize(): trimmed, lower-case, runs of 3+ equal characters collapsed to 2, at most 40 characters. */
+const normalizeToken = (t: string): string => t.trim().toLowerCase().replace(/(.)\1{2,}/gsu, '$1$1').slice(0, 40);
+
+function compile(patterns: string[]): RegExp[] {
+  const out: RegExp[] = [];
+  for (const p of patterns) {
+    if (p.trim() === '' || unsafePattern(p)) continue;
+    try { out.push(new RegExp(p.trim(), 'i')); } catch { /* not a pattern: skipped, as the detector does */ }
+  }
+  return out;
+}
+
+/** What the detector would count a chat message as: laugh wins over reaction; null — not a trigger message.
+ *  An approximation: the detector runs the patterns in Python. */
+export function classifyMessage(text: string, laugh: string[], reaction: string[]): 'laugh' | 'reaction' | null {
+  const tokens = text.split(/\s+/).map(normalizeToken).filter((t) => t !== '');
+  const hit = (res: RegExp[]) => tokens.some((t) => res.some((r) => r.test(t)));
+  if (hit(compile(laugh))) return 'laugh';
+  return hit(compile(reaction)) ? 'reaction' : null;
 }

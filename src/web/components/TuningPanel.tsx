@@ -188,7 +188,7 @@ export function TuningPanel({ stream, streams, profile, factory, liveEntries }: 
       {profile && (
         <div>
           <button type="button" onClick={() => setEditing((v) => !v)}>Все настройки профиля</button>
-          {editing && <ProfileEditor key={profile.id} profile={profile} streams={streams} />}
+          {editing && <ProfileEditor key={profile.id} profile={profile} streams={streams} {...(factory ? { factory } : {})} />}
         </div>
       )}
     </div>

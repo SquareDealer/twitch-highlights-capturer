@@ -1,4 +1,5 @@
-import { defaultConfig, type ServiceConfig } from './config';
+import type { ServiceConfig } from './config';
+import { CUT_DEFAULTS, detectorDefaults } from './defaults';
 
 export interface ProfileSettings {
   detector: {
@@ -208,7 +209,9 @@ function assemble(num: (path: string) => number, words: Words): ProfileSettings 
 const at = (root: unknown, path: string): unknown =>
   path.split('.').reduce<unknown>((o, k) => (typeof o === 'object' && o !== null ? (o as Record<string, unknown>)[k] : undefined), root);
 
-export function settingsFromConfig(cfg: ServiceConfig): ProfileSettings {
+export function settingsFromConfig(
+  cfg: Pick<ServiceConfig, 'detector' | 'preRollMs' | 'preRollLowConfidenceMs' | 'postRollMs' | 'maxClipMs' | 'maxClipsPerHour'>,
+): ProfileSettings {
   // `cut.*` lives at the top level of ServiceConfig; everything else under `detector`.
   const num = (path: string) => at(path.startsWith('cut.') ? { cut: cfg } : cfg, path) as number;
   return assemble(num, { laugh: [...cfg.detector.chat.laughWords], reaction: [...cfg.detector.chat.reactionWords] });
@@ -267,7 +270,7 @@ export function validateSettings(raw: unknown): Result {
 
 /** The values the service ships with (not the editable «По умолчанию» profile). */
 export function factorySettings(): ProfileSettings {
-  return settingsFromConfig(defaultConfig(''));
+  return settingsFromConfig({ ...CUT_DEFAULTS, detector: detectorDefaults() });
 }
 
 /**

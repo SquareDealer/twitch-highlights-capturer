@@ -28,20 +28,44 @@ const stream = (over: Partial<StreamStatus> = {}): StreamStatus => ({
 });
 const props = (over: Partial<Parameters<typeof ProfileEditor>[0]> = {}) => ({ profile: P, streams: [], ...over });
 const view = (over: Partial<Parameters<typeof ProfileEditor>[0]> = {}) => render(<ProfileEditor {...props(over)} />);
-const share = () => screen.getByLabelText(/Состав: триггерных сообщений, не меньше/) as HTMLInputElement;
+const SHARE = 'Состав: триггерных сообщений, не меньше';
+const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+const share = () => field(SHARE);
+const save = () => screen.getByRole('button', { name: 'Сохранить' });
 
 beforeEach(() => {
   mocks.updateProfile.mockReset();
 });
 afterEach(cleanup);
 
-it('renders every field with its label and the current value', () => {
+it('renders every field with its label and the current value in display units', () => {
   const { container } = view();
-  expect(share().value).toBe('0,5');
-  expect(container.querySelectorAll('input[inputmode="decimal"]').length).toBe(28);
+  expect(share().value).toBe('50');
+  expect(field('Запас до события').value).toBe('15');
+  expect(container.querySelectorAll('input[inputmode="decimal"]').length).toBe(27);
   expect(screen.getByLabelText('Название')).toBeTruthy();
-  expect(screen.getByLabelText('Смех')).toBeTruthy();
-  expect(screen.getByLabelText('Реакции')).toBeTruthy();
+  expect(screen.getByRole('group', { name: 'Смех' })).toBeTruthy();
+  expect(screen.getByRole('group', { name: 'Реакции' })).toBeTruthy();
+});
+
+it('keeps the six basic fields on top and the rest in collapsed groups', () => {
+  const { container } = view();
+  const basic = container.querySelector('.editor-basic')!;
+  expect([...basic.querySelectorAll('label')].map((l) => l.textContent)).toEqual([
+    'Всплеск: чат быстрее фона в', SHARE, 'Триггерных сообщений, не меньше', 'Авторов триггерных сообщений, не меньше', 'Запас до события', 'Запас после события',
+  ]);
+  const groups = [...container.querySelectorAll('details.editor-group')] as HTMLDetailsElement[];
+  expect(groups.map((g) => g.querySelector('summary')!.textContent)).toEqual(['Событие', 'Оценка', 'Звук', 'Нарезка', 'Окна']);
+  expect(groups.every((g) => !g.open)).toBe(true);
+});
+
+it('counts the fields of a group that differ from the factory values', () => {
+  const changed = structuredClone(P.settings);
+  changed.detector.score.spikeFull = 8;
+  changed.detector.score.audioMinDb = 12;
+  const { container } = view({ profile: { ...P, settings: changed } });
+  const score = [...container.querySelectorAll('details.editor-group summary')].find((x) => x.textContent!.startsWith('Оценка'))!;
+  expect(score.textContent).toBe('Оценка · изменено 2');
 });
 
 it('warns which running streams the edit will hit', () => {
@@ -49,94 +73,153 @@ it('warns which running streams the edit will hit', () => {
   expect(screen.getByText('Изменения сразу подействуют на эфиры: alice, bob')).toBeTruthy();
 });
 
-it('saves parsed settings and reports how many streams got them', async () => {
+it('shows the bar with the number of unsaved fields only while something is edited', () => {
+  view();
+  expect(screen.queryByRole('button', { name: 'Сохранить' })).toBeNull();
+  fireEvent.change(share(), { target: { value: '60' } });
+  expect(screen.getByText('изменено 1 поле')).toBeTruthy();
+  fireEvent.change(field('Запас до события'), { target: { value: '20' } });
+  expect(screen.getByText('изменено 2 поля')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Отменить' }));
+  expect(share().value).toBe('50');
+  expect(screen.queryByRole('button', { name: 'Сохранить' })).toBeNull();
+});
+
+it('saves stored units and reports how many streams got them', async () => {
   mocks.updateProfile.mockResolvedValue(P);
   view({ streams: [stream({ channel: 'alice', profile: { id: P.id, name: P.name } })] });
-  fireEvent.change(share(), { target: { value: '0,6' } });
-  fireEvent.click(screen.getByText('Сохранить'));
+  fireEvent.change(field('Всплеск: чат быстрее фона в'), { target: { value: '5' } });
+  fireEvent.change(share(), { target: { value: '60' } });
+  fireEvent.click(save());
   await waitFor(() => expect(mocks.updateProfile).toHaveBeenCalled());
-  expect(mocks.updateProfile.mock.calls[0]![1].settings.detector.chat.minTriggerShare).toBe(0.6);
+  const sent = mocks.updateProfile.mock.calls[0]![1].settings;
+  expect([sent.detector.chat.minSpike, sent.detector.chat.minTriggerShare, sent.cut.preRollMs]).toEqual([5, 0.6, 15000]);
   expect(await screen.findByText('применено к эфирам: 1')).toBeTruthy();
 });
 
 it('says "сохранено" when no stream uses the profile', async () => {
   mocks.updateProfile.mockResolvedValue(P);
   view();
-  fireEvent.change(share(), { target: { value: '0,6' } });
-  fireEvent.click(screen.getByText('Сохранить'));
+  fireEvent.change(share(), { target: { value: '60' } });
+  fireEvent.click(save());
   expect(await screen.findByText('сохранено')).toBeTruthy();
 });
 
 it('does not send a request when a field is empty and shows the error at it', () => {
   view();
-  fireEvent.change(screen.getByLabelText('Запас после события'), { target: { value: '' } });
-  fireEvent.click(screen.getByText('Сохранить'));
+  fireEvent.change(field('Запас после события'), { target: { value: '' } });
+  fireEvent.click(save());
   expect(mocks.updateProfile).not.toHaveBeenCalled();
   expect(screen.getByText('«Запас после события»: нужно число')).toBeTruthy();
 });
 
-it('shows a server validation error at the field it names', async () => {
-  const { ApiError } = await import('../../src/web/api');
-  mocks.updateProfile.mockRejectedValue(new ApiError(400, '«Окно подсчёта сообщений»: допустимо от 1 до 60', 'detector.chat.windowS'));
-  view();
-  fireEvent.change(screen.getByLabelText('Окно подсчёта сообщений'), { target: { value: '99' } });
-  fireEvent.click(screen.getByText('Сохранить'));
-  const err = await screen.findByText('«Окно подсчёта сообщений»: допустимо от 1 до 60');
-  expect(err.closest('.field')?.querySelector('#pf-detector\\.chat\\.windowS')).toBeTruthy();
+it('blocks a save that breaks a pair rule and opens the group of the field', () => {
+  const { container } = view();
+  fireEvent.change(field('Всплеск: чат быстрее фона в'), { target: { value: '7' } });
+  fireEvent.click(save());
+  expect(mocks.updateProfile).not.toHaveBeenCalled();
+  const err = screen.getByText('«Скорость чата, дающая 5 баллов» должна быть больше порога всплеска');
+  expect((err.closest('details') as HTMLDetailsElement).open).toBe(true);
+  expect(container.querySelectorAll('details.editor-group[open]')).toHaveLength(1);
 });
 
-it('shows a server error without a path under the buttons', async () => {
+it('shows a server validation error at the field it names', async () => {
+  const { ApiError } = await import('../../src/web/api');
+  mocks.updateProfile.mockRejectedValue(new ApiError(400, 'отказ сервера', 'detector.chat.windowS'));
+  view();
+  fireEvent.change(field('Окно подсчёта сообщений'), { target: { value: '9' } });
+  fireEvent.click(save());
+  const err = await screen.findByText('отказ сервера');
+  expect(err.closest('.field')?.querySelector('#pf-detector\\.chat\\.windowS')).toBeTruthy();
+  expect((err.closest('details') as HTMLDetailsElement).open).toBe(true);
+});
+
+it('shows a server error without a path next to the buttons', async () => {
   const { ApiError } = await import('../../src/web/api');
   mocks.updateProfile.mockRejectedValue(new ApiError(0, 'Нет связи с сервером'));
   view();
-  fireEvent.change(share(), { target: { value: '0,6' } });
-  fireEvent.click(screen.getByText('Сохранить'));
+  fireEvent.change(share(), { target: { value: '60' } });
+  fireEvent.click(save());
   expect(await screen.findByText('Нет связи с сервером')).toBeTruthy();
 });
 
-it('saves on Enter in an input', async () => {
+it('saves on Enter in a number input', async () => {
   mocks.updateProfile.mockResolvedValue(P);
   view();
-  fireEvent.change(share(), { target: { value: '0,6' } });
+  fireEvent.change(share(), { target: { value: '60' } });
   fireEvent.keyDown(share(), { key: 'Enter' });
   await waitFor(() => expect(mocks.updateProfile).toHaveBeenCalledTimes(1));
 });
 
-it('reverts the form', () => {
+it('edits dictionaries as chips and saves them as lists', async () => {
+  mocks.updateProfile.mockResolvedValue(P);
   view();
-  const save = screen.getByText('Сохранить') as HTMLButtonElement;
-  const revert = screen.getByText('Отменить изменения') as HTMLButtonElement;
-  expect(save.disabled && revert.disabled).toBe(true);
-  fireEvent.change(share(), { target: { value: '0,6' } });
-  expect(save.disabled || revert.disabled).toBe(false);
-  fireEvent.click(revert);
-  expect(share().value).toBe('0,5');
-  expect(save.disabled && revert.disabled).toBe(true);
+  const add = screen.getByLabelText('Смех: добавить шаблон');
+  fireEvent.change(add, { target: { value: '^бугага$' } });
+  fireEvent.keyDown(add, { key: 'Enter' });
+  expect(mocks.updateProfile).not.toHaveBeenCalled(); // Enter in the chip input adds a chip, it does not save
+  fireEvent.click(screen.getByRole('button', { name: 'Удалить ^lul$' }));
+  fireEvent.click(save());
+  await waitFor(() => expect(mocks.updateProfile).toHaveBeenCalled());
+  const words: string[] = mocks.updateProfile.mock.calls[0]![1].settings.detector.chat.laughWords;
+  expect(words.includes('^бугага$') && !words.includes('^lul$')).toBe(true);
+  expect(words).toHaveLength(P.settings.detector.chat.laughWords.length);
+});
+
+it('tells what a chat message would count as, with the patterns being edited', () => {
+  view();
+  const probe = screen.getByLabelText('Проверить сообщение');
+  const result = () => screen.getByTestId('probe-result').textContent;
+  expect(result()).toBe('');
+  fireEvent.change(probe, { target: { value: 'ахахах' } });
+  expect(result()).toBe('смех');
+  fireEvent.change(probe, { target: { value: 'НЕЕЕЕТ' } });
+  expect(result()).toBe('реакция');
+  fireEvent.change(probe, { target: { value: 'привет всем' } });
+  expect(result()).toBe('не триггер');
+  const add = screen.getByLabelText('Реакции: добавить шаблон');
+  fireEvent.change(add, { target: { value: '^привет$' } });
+  fireEvent.keyDown(add, { key: 'Enter' });
+  expect(result()).toBe('реакция');
 });
 
 it('resets the form when another profile is shown', () => {
   const { rerender } = view();
-  fireEvent.change(share(), { target: { value: '0,6' } });
+  fireEvent.change(share(), { target: { value: '60' } });
   rerender(<ProfileEditor {...props({ profile: { ...P, id: 'p2', name: 'Другой' } })} />);
-  expect(share().value).toBe('0,5');
+  expect(share().value).toBe('50');
   expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('Другой');
 });
 
 it('keeps unsaved edits when the same profile is updated from outside, but takes the update when clean', () => {
   const updated = { ...P, updatedAt: '2026-02-01T00:00:00Z', settings: { ...P.settings, cut: { ...P.settings.cut, postRollMs: 7000 } } };
   const { rerender, unmount } = view();
-  fireEvent.change(share(), { target: { value: '0,6' } });
+  fireEvent.change(share(), { target: { value: '60' } });
   rerender(<ProfileEditor {...props({ profile: updated })} />);
-  expect(share().value).toBe('0,6');
-  expect((screen.getByLabelText('Запас после события') as HTMLInputElement).value).toBe('10000');
+  expect(share().value).toBe('60');
+  expect(field('Запас после события').value).toBe('10');
   unmount();
 
   const clean = view();
   clean.rerender(<ProfileEditor {...props({ profile: updated })} />);
-  expect((screen.getByLabelText('Запас после события') as HTMLInputElement).value).toBe('7000');
+  expect(field('Запас после события').value).toBe('7');
 });
 
-it('lists patterns the detector does not use', () => {
-  view({ streams: [stream({ profile: { id: P.id, name: P.name }, profileBadPatterns: ['(('] })] });
+it('marks patterns the detector does not use', () => {
+  const settings = structuredClone(P.settings);
+  settings.detector.chat.laughWords = ['((', '^lol$'];
+  const { container } = view({ profile: { ...P, settings }, streams: [stream({ profile: { id: P.id, name: P.name }, profileBadPatterns: ['(('] })] });
   expect(screen.getByText('Не используется детектором: ((')).toBeTruthy();
+  expect(container.querySelector('.chip.bad')!.textContent).toContain('((');
+});
+
+it('opens a profile with a missing key and names the field on save', () => {
+  const broken = structuredClone(P.settings) as any;
+  delete broken.detector.chat.minSpike;
+  view({ profile: { ...P, settings: broken } });
+  expect(field('Всплеск: чат быстрее фона в').value).toBe('');
+  fireEvent.change(share(), { target: { value: '60' } });
+  fireEvent.click(save());
+  expect(mocks.updateProfile).not.toHaveBeenCalled();
+  expect(screen.getByText('«Всплеск: чат быстрее фона в»: нужно число')).toBeTruthy();
 });

@@ -64,13 +64,36 @@ input[type=text], textarea {
   background: #0e0f13; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font: inherit; min-width: 0;
 }
 textarea { width: 100%; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
-.profile-editor fieldset.card { margin: 0 0 12px; }
-.profile-editor legend { color: var(--muted); padding: 0 6px; }
+.profile-editor { padding-bottom: 8px; }
+.profile-editor .card { margin: 0 0 12px; }
+.profile-editor h3 { margin: 0 0 4px; font-size: 16px; }
+.profile-editor .card > p { margin: 0 0 14px; font-size: 13px; }
+.editor-group > summary { cursor: pointer; color: var(--muted); font-weight: 600; padding: 2px 0; }
+.editor-group[open] > summary { margin-bottom: 12px; color: var(--text); }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
-.field-input { display: flex; gap: 8px; align-items: center; }
-.field-input input { width: 140px; }
+.field:last-child { margin-bottom: 0; }
 .field .hint { font-size: 13px; }
 .field .error { margin-top: 0; font-size: 14px; }
+.nf-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nf-row { display: flex; gap: 10px; align-items: center; }
+.nf-row input[type="range"] { flex: 1; min-width: 80px; accent-color: var(--accent); padding: 0; border: 0; background: none; }
+.nf-row input[type="text"] { width: 84px; text-align: right; }
+.nf-row input.probe { flex: 1; width: auto; text-align: left; }
+.nf-row input[aria-invalid="true"] { border-color: var(--bad); }
+.nf-row .unit { width: 28px; }
+.hint-btn { width: 20px; height: 20px; padding: 0; border-radius: 50%; font-size: 12px; line-height: 1; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: #14161d; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 10px; }
+.chip code { font-size: 13px; }
+.chip button { border: 0; background: none; color: var(--muted); padding: 0 6px; font-size: 16px; line-height: 1; }
+.chip button:hover { color: var(--bad); }
+.chip.bad { border-color: var(--warn); color: var(--warn); }
+.chip-input { width: 150px; }
+.probe-hit { color: var(--ok); font-weight: 600; }
+.save-bar { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--accent); border-radius: 10px; padding: 10px 14px; box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.45); }
+.save-bar > span { flex: 1; min-width: 140px; }
+.editor-status { margin-bottom: 8px; }
 @media (min-width: 700px) { .profiles { grid-template-columns: 220px 1fr; } }
 
 .tuning { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; }

@@ -2,20 +2,21 @@
 import type { DetectorDetail, DetectorSignals } from '../../src/service/detectorProcess';
 import { defaultConfig } from '../../src/service/config';
 import { FIELDS, fromDisplay, settingsFromConfig, toDisplay } from '../../src/service/profileSettings';
-import { clampField, conditionRows, entryText, firedWith, firingStarts, fromForm, mergeFrames, parseNumber, storeTuning, thresholdsOf, toForm, tuningStored, verdict } from '../../src/web/tuning';
+import { clampField, classifyMessage, conditionRows, entryText, firedWith, firingStarts, fromForm, mergeFrames, parseNumber, storeTuning, thresholdsOf, toForm, tuningStored, verdict } from '../../src/web/tuning';
 
 const SEED = settingsFromConfig(defaultConfig('/d'));
 
 it.each([['0,05', 0.05], [' 12 ', 12], ['1.5', 1.5], ['-3', -3]])('parses %s', (t, v) => expect(parseNumber(t)).toBe(v));
 it.each(['', '  ', 'abc', '1,2,3', '5 с'])('rejects %j', (t) => expect(parseNumber(t)).toBeNull());
 it('round-trips the defaults through the form', () => expect(fromForm(toForm(SEED))).toEqual({ ok: true, value: SEED }));
-it('shows decimals with a comma', () => expect(toForm(SEED)['detector.chat.minTriggerShare']).toBe('0,5'));
+it('shows decimals with a comma', () => expect(toForm(SEED)['detector.chat.minTriggerShare']).toBe('50'));
 it('names the field that is not a number', () => {
   expect(fromForm({ ...toForm(SEED), 'cut.postRollMs': '' })).toEqual({ ok: false, path: 'cut.postRollMs', error: '«Запас после события»: нужно число' });
 });
 it('splits dictionaries by line', () => {
   const r = fromForm({ ...toForm(SEED), 'detector.chat.laughWords': '^lol$\r\n\n ^kek$ ' });
   expect(r.ok && r.value.detector.chat.laughWords).toEqual(['^lol$', '', ' ^kek$ ']); // the server cleans them
+  expect(toForm(SEED)['cut.preRollMs']).toBe('15');
 });
 
 const S = SEED;
@@ -131,5 +132,22 @@ describe('the trigger rule on stored frames', () => {
     const share = FIELDS.find((x) => x.path === 'detector.chat.minTriggerShare')!;
     const pre = FIELDS.find((x) => x.path === 'cut.preRollMs')!;
     expect([toDisplay(share, 0.55), fromDisplay(share, 55), toDisplay(pre, 15000), fromDisplay(pre, 7.5)]).toEqual([55, 0.55, 15, 7500]);
+  });
+});
+
+describe('classifyMessage', () => {
+  const L = SEED.detector.chat.laughWords;
+  const R = SEED.detector.chat.reactionWords;
+  it('normalises like the detector: case, long runs, words', () => {
+    expect(classifyMessage('АХАХАХ', L, R)).toBe('laugh');
+    expect(classifyMessage('ну ЛООООООЛ же', L, R)).toBe('laugh');
+    expect(classifyMessage('wtffff', L, R)).toBe('reaction');
+    expect(classifyMessage('привет', L, R)).toBeNull();
+    expect(classifyMessage('   ', L, R)).toBeNull();
+  });
+  it('prefers laugh over reaction', () => expect(classifyMessage('нееет хаха', L, R)).toBe('laugh'));
+  it('skips patterns that do not compile or may hang', () => {
+    expect(classifyMessage('aaaa', ['((', '^(a+)+$'], [])).toBeNull();
+    expect(classifyMessage('aaaa', ['((', '^a+$'], [])).toBe('laugh');
   });
 });

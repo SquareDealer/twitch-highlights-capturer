@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Profile } from '../../service/profiles';
+import type { ProfileSettings } from '../../service/profileSettings';
 import type { StreamStatus } from '../../service/streams';
 import type { TuningEntry } from '../../service/tuningLog';
 import { api } from '../api';
@@ -26,8 +27,8 @@ function Meter({ label, value, max }: { label: string; value: number; max: numbe
   );
 }
 
-export function StreamCard({ stream, streams, profiles, liveEntries }: {
-  stream: StreamStatus; streams: StreamStatus[]; profiles: Profile[]; liveEntries: TuningEntry[];
+export function StreamCard({ stream, streams, profiles, factory, liveEntries }: {
+  stream: StreamStatus; streams: StreamStatus[]; profiles: Profile[]; factory?: ProfileSettings; liveEntries: TuningEntry[];
 }) {
   const [tuning, setTuning] = useState(() => tuningStored(stream.channel));
   const [busy, setBusy] = useState(false);
@@ -93,7 +94,7 @@ export function StreamCard({ stream, streams, profiles, liveEntries }: {
         </label>
       </div>
       {error && <div className="error">{error}</div>}
-      {tuning && <TuningPanel stream={stream} streams={streams} profile={profiles.find((x) => x.id === stream.profile.id)} liveEntries={liveEntries} />}
+      {tuning && <TuningPanel stream={stream} streams={streams} profile={profiles.find((x) => x.id === stream.profile.id)} {...(factory ? { factory } : {})} liveEntries={liveEntries} />}
     </article>
   );
 }

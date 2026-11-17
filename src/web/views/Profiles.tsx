@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import type { Profile } from '../../service/profiles';
+import type { ProfileSettings } from '../../service/profileSettings';
 import type { StreamStatus } from '../../service/streams';
 import { api } from '../api';
 import { ProfileEditor } from '../components/ProfileEditor';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function Profiles({ profiles, streams }: { profiles: Profile[]; streams: StreamStatus[] }) {
+export function Profiles({ profiles, streams, factory }: { profiles: Profile[]; streams: StreamStatus[]; factory?: ProfileSettings }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [copyName, setCopyName] = useState('');
   const [error, setError] = useState('');
@@ -76,7 +77,7 @@ export function Profiles({ profiles, streams }: { profiles: Profile[]; streams: 
               </button>
             </div>
           )}
-          <ProfileEditor key={selected.id} profile={selected} streams={streams} />
+          <ProfileEditor key={selected.id} profile={selected} streams={streams} {...(factory ? { factory } : {})} />
         </div>
       )}
     </section>

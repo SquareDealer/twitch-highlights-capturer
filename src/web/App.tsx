@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { StreamStatus } from '../service/streams';
 import type { Profile } from '../service/profiles';
+import type { ProfileSettings } from '../service/profileSettings';
 import type { TuningEntry } from '../service/tuningLog';
 import { api, ApiError, setUnauthorizedHandler, subscribe, type CuttingState, type Notice, type PublicClip } from './api';
 import { Feed } from './views/Feed';
@@ -18,6 +19,7 @@ export function App() {
   const [multi, setMulti] = useState(false);
   const [cutting, setCutting] = useState<CuttingState>({ paused: false, reason: null });
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [factory, setFactory] = useState<ProfileSettings | undefined>(undefined);
   // Live tuning entries per stream (newest last, at most 100): consumed by the tuning panel.
   const [tuningLive, setTuningLive] = useState<Record<string, TuningEntry[]>>({});
   const [clips, setClips] = useState<PublicClip[]>([]);
@@ -31,6 +33,7 @@ export function App() {
       setMulti(s.mode.multiStream);
       setCutting(s.cutting);
       setProfiles(s.profiles);
+      setFactory(s.factorySettings);
       setClips(await api.clips({ limit: 200 }));
       setScreen((cur) => (cur === 'feed' || cur === 'profiles' ? cur : 'streams'));
     } catch (e) {
@@ -85,9 +88,9 @@ export function App() {
         <div className={`notice ${notice.level}`} onClick={() => setNotice(null)}>{notice.message}</div>
       )}
       {screen === 'streams' ? (
-        <Streams streams={streams} multiStream={multi} cutting={cutting} profiles={profiles} tuningLive={tuningLive} onMode={setMulti} />
+        <Streams streams={streams} multiStream={multi} cutting={cutting} profiles={profiles} {...(factory ? { factory } : {})} tuningLive={tuningLive} onMode={setMulti} />
       ) : screen === 'profiles' ? (
-        <Profiles profiles={profiles} streams={streams} />
+        <Profiles profiles={profiles} streams={streams} {...(factory ? { factory } : {})} />
       ) : (
         <Feed clips={clips} onChange={(c) => setClips((l) => upsert(l, c))} />
       )}
