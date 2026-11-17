@@ -25,8 +25,8 @@
 
 1. A silent window (`N = 0`) or a one-message tail second: `q` is 0 for `N = 0`, never divides by zero, and tail seconds never raise an event's share score. → Task 1.
 2. A stored profile that predates the migration or lacks a key (hand-edited DB, seed from an old `config.json`): the service starts, the editor opens it, saving validates it. → Task 2.
-3. The Google callback arriving twice, with a stale or unknown `state`, or after a service restart: a readable Russian page, no crash, no token written. → Task 10.
-4. A clip file that disappears between counting and uploading (janitor, manual delete): that clip is marked failed with a clear message and the rest still upload. → Task 11.
+3. The Google callback arriving twice, with a stale or unknown `state`, or after a service restart: a readable Russian page, no crash, no token written. → Tasks 9, 11.
+4. A clip file that disappears between counting and uploading (janitor, manual delete): that clip is marked failed with a clear message and the rest still upload. → Task 10.
 5. A threshold dragged past the chart edge, or a panel with zero frames: the value clamps to the field's `min…max`, counters show 0, no `NaN` in the DOM. → Tasks 4, 5.
 
 ---
