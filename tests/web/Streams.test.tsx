@@ -136,7 +136,7 @@ it('the editor opened from the tuning panel names every stream on the profile', 
   localStorage.setItem('hl.tuning.shroud', '1');
   view({ streams: [stream(), stream({ id: 's2', channel: 'xqc' })] });
   await screen.findByText('Журнал');
-  fireEvent.click(screen.getByText('Изменить профиль'));
+  fireEvent.click(screen.getByText('Все настройки профиля'));
   expect(screen.getByText('Изменения сразу подействуют на эфиры: shroud, xqc')).toBeTruthy();
 });
 

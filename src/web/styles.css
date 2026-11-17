@@ -75,12 +75,49 @@ textarea { width: 100%; resize: vertical; font-family: ui-monospace, Consolas, m
 
 .tuning { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; }
 .tuning h4 { margin: 10px 0 4px; color: var(--muted); font-weight: 600; }
-.tuning .cond { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.tuning .cond.ok > span:first-child { color: var(--ok); }
-.tuning .cond.bad > span:first-child { color: var(--bad); }
-.tuning .spark-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
-.tuning .spark-row > span { width: 64px; }
-.sparkline { flex: 1; height: 40px; background: #14161d; border-radius: 6px; }
-.sparkline .line { stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.sparkline .threshold { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.tuning section { margin-top: 10px; }
+.tuning .tuning-count { margin: 10px 0 8px; }
+.tuning .row { flex-wrap: wrap; }
+
+/* trigger chain: spike → composition → sound (bonus) */
+.chain-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.chain-step { position: relative; background: #14161d; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+.chain-step.ok { border-left-color: var(--ok); }
+.chain-step.bad { border-left-color: var(--bad); }
+.chain-step.dim { opacity: 0.5; }
+.chain-step.bonus.on { border-left-color: var(--accent); }
+.chain-title { display: flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 600; }
+.chain-n { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--line); color: var(--text); font-size: 11px; }
+.chain-step.ok .chain-n { background: var(--ok); color: #06140d; }
+.chain-step.bad .chain-n { background: var(--bad); color: #1a0606; }
+.chain-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 2px 0 4px; }
+.chain-bar { position: relative; height: 6px; background: var(--line); border-radius: 3px; margin-bottom: 4px; }
+.chain-bar .fill { height: 100%; border-radius: 3px; background: var(--muted); transition: width 0.3s; }
+.chain-step.ok .chain-bar .fill { background: var(--ok); }
+.chain-bar .tick { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--warn); }
+.chain-verdict { margin: 8px 0 2px; font-weight: 600; }
+.chain-verdict.ok { color: var(--ok); }
+.chain-warm { margin-bottom: 6px; }
+@media (max-width: 520px) { .chain-steps { grid-template-columns: 1fr; } }
+
+/* chart with a draggable threshold */
+.tchart { margin-top: 12px; }
+.tchart-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.tchart-controls { display: inline-flex; align-items: center; gap: 4px; }
+.tchart-controls input { width: 64px; text-align: right; padding: 4px 6px; }
+.tchart-controls button { min-width: 30px; padding: 4px 8px; }
+.tchart-plot { display: block; width: 100%; height: 84px; background: #14161d; border-radius: 6px; touch-action: none; overflow: visible; }
+.tchart-plot line, .tchart-plot polyline { vector-effect: non-scaling-stroke; }
+.tchart-plot .line { stroke: var(--accent); stroke-width: 1.5; }
+.tchart-plot .mark { stroke: var(--ok); stroke-width: 2; opacity: 0.55; }
+.tchart-plot .secondary { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 4; }
+.tchart-plot .saved { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.6; }
+.tchart-plot .threshold { stroke: var(--warn); stroke-width: 2; pointer-events: none; }
+.tchart-plot .grab { stroke: transparent; stroke-width: 22; cursor: ns-resize; }
+.tchart-plot .handle:focus-visible .threshold, .tchart-plot.dragging .threshold { stroke-width: 4; }
+.tchart-plot .handle { outline: none; }
+.tchart-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; }
+.tchart-legend .key { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--warn); vertical-align: middle; margin-right: 4px; }
+.tchart-legend .k-secondary { border-top: 1px dashed var(--muted); }
+.tchart-legend .k-mark { width: 0; height: 10px; border-top: 0; border-left: 2px solid var(--ok); }
 .tuning .log-entry { padding: 2px 0; }

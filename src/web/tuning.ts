@@ -126,16 +126,22 @@ export const thresholdsOf = (s: ProfileSettings): Thresholds => {
   return { minSpike: c.minSpike, minTriggerShare: c.minTriggerShare, minTriggerMessages: c.minTriggerMessages, minTriggerAuthors: c.minTriggerAuthors };
 };
 
-/** The detector's rule (EventAssembler.conditions) applied to a stored frame with other thresholds.
- *  null: the frame carries no detail and cannot be judged. */
-export function firedWith(f: DetectorSignals, t: Thresholds): boolean | null {
-  const d = f.detail;
-  if (!d) return null;
+/** The detector's conditions (EventAssembler.conditions) recomputed for other thresholds. */
+export function conditionsWith(d: DetectorDetail, t: Thresholds): DetectorDetail['conditions'] {
   const c = d.chat;
-  return (
-    d.conditions.warm && c.spike >= t.minSpike && c.messages > 0 && c.triggerShare >= t.minTriggerShare &&
-    c.triggerMessages >= t.minTriggerMessages && c.triggerAuthors >= t.minTriggerAuthors
-  );
+  const cond = {
+    warm: d.conditions.warm,
+    spike: c.spike >= t.minSpike,
+    messages: c.triggerMessages >= t.minTriggerMessages,
+    authors: c.triggerAuthors >= t.minTriggerAuthors,
+    share: c.messages > 0 && c.triggerShare >= t.minTriggerShare,
+  };
+  return { ...cond, fired: cond.warm && cond.spike && cond.messages && cond.authors && cond.share };
+}
+
+/** The rule applied to a stored frame. null: the frame carries no detail and cannot be judged. */
+export function firedWith(f: DetectorSignals, t: Thresholds): boolean | null {
+  return f.detail ? conditionsWith(f.detail, t).fired : null;
 }
 
 /** Indexes of the frames that start a firing: fired, and the previous judged frame did not. */
