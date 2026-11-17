@@ -23,7 +23,11 @@ test('triggerLabel', () => {
   expect(triggerLabel('audio')).toBe('звук');
   expect(triggerLabel('manual')).toBe('вручную');
 });
-test('clipSummary shows trigger share of active chatters when present', () => {
+test('clipSummary shows the composition of the spike on new clips', () => {
+  expect(clipSummary(sig({ chatSpike: 4, triggerShare: 0.7, triggerMessages: 7, messages: 10, laughShare: 0.5, deltaDb: 15 })))
+    .toBe('чат ×4 · состав 70 % · звук +15 дБ');
+});
+test('clipSummary keeps the share of active chatters on clips of the older rule', () => {
   expect(clipSummary(sig({ chatSpike: 4, triggerShare: 0.1, triggerMessages: 6, activeAuthors: 40, laughShare: 0.5, deltaDb: 15 })))
     .toBe('чат ×4 · реакция 10 % активных · звук +15 дБ');
 });

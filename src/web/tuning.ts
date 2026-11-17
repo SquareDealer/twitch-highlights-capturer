@@ -53,9 +53,10 @@ export function conditionRows(d: DetectorDetail, s: ProfileSettings): ConditionR
   const t = s.detector.chat;
   return [
     { ok: d.conditions.warm, label: 'прогрев', value: `идёт ${duration(d.sinceStartMs)}`, need: `нужно ${num(s.detector.events.warmupS)} с` },
+    { ok: d.conditions.spike, label: 'всплеск', value: `×${num(c.spike)}`, need: `≥ ×${num(t.minSpike)}` },
+    { ok: d.conditions.share, label: 'состав', value: `${pct(c.triggerShare)} (${c.triggerMessages} из ${c.messages})`, need: `≥ ${pct(t.minTriggerShare)}` },
     { ok: d.conditions.messages, label: 'триггерных сообщений', value: `${c.triggerMessages}`, need: `≥ ${t.minTriggerMessages}` },
     { ok: d.conditions.authors, label: 'авторов', value: `${c.triggerAuthors}`, need: `≥ ${t.minTriggerAuthors}` },
-    { ok: d.conditions.share, label: 'доля активных', value: `${pct(c.triggerShare)} (${c.triggerAuthors} из ${c.activeAuthors})`, need: `≥ ${pct(t.minTriggerShare)}` },
   ];
 }
 
@@ -63,22 +64,23 @@ export function verdict(d: DetectorDetail): string {
   if (d.conditions.fired) return 'сработало';
   const missing = [
     !d.conditions.warm && 'прогрева',
+    !d.conditions.spike && 'всплеска',
+    !d.conditions.share && 'состава',
     !d.conditions.messages && 'сообщений',
     !d.conditions.authors && 'авторов',
-    !d.conditions.share && 'доли',
   ].filter(Boolean);
   return `не сработало: не хватает ${missing.join(', ')}`;
 }
 
-const MISSING: Record<string, string> = { share: 'доли', authors: 'авторов', warm: 'прогрева' };
+const MISSING: Record<string, string> = { warm: 'прогрева', spike: 'всплеска', share: 'состава', messages: 'сообщений', authors: 'авторов' };
 
 export function entryText(e: TuningEntry): string {
   switch (e.kind) {
     case 'clip':
-      return `клип ${num(e.scores.total)} · ${e.triggers.map(triggerLabel).join(' + ')} · доля ${num(e.scores.share)} + скорость ${num(e.scores.speed)} + звук ${num(e.scores.audio)}`;
+      return `клип ${num(e.scores.total)} · ${e.triggers.map(triggerLabel).join(' + ')} · скорость ${num(e.scores.speed)} + состав ${num(e.scores.share)} + звук ${num(e.scores.audio)}`;
     case 'nearmiss': {
       const v = e.values;
-      return `почти: не хватает ${e.missing.map((m) => MISSING[m] ?? m).join(', ')} · ${v.triggerMessages} сообщ., ${v.triggerAuthors} авт., доля ${pct(v.triggerShare ?? 0)}`;
+      return `почти: не хватает ${e.missing.map((m) => MISSING[m] ?? m).join(', ')} · чат ×${num(v.spike ?? 0)} · состав ${pct(v.triggerShare ?? 0)} (${v.triggerMessages ?? 0} из ${v.messages ?? 0}) · ${v.triggerAuthors ?? 0} авт.`;
     }
     case 'limited':
       return `событие ${num(e.scores.total)} отброшено: лимит ${e.limit} клипов в час, медиана ${num(e.median)}`;

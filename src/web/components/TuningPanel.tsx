@@ -75,7 +75,7 @@ export function TuningPanel({ stream, streams, profile, liveEntries }: {
               ))
             ) : (
               <div className="muted">
-                прогрев: идёт {duration(d.sinceStartMs)} · сообщений {d.chat.triggerMessages} · авторов {d.chat.triggerAuthors} · доля {num(d.chat.triggerShare * 100)} %
+                прогрев: идёт {duration(d.sinceStartMs)} · чат ×{num(d.chat.spike)} · состав {num(d.chat.triggerShare * 100)} % · сообщений {d.chat.triggerMessages} · авторов {d.chat.triggerAuthors}
               </div>
             )}
             <div>{verdict(d)}</div>
@@ -95,7 +95,7 @@ export function TuningPanel({ stream, streams, profile, liveEntries }: {
           <section>
             <h4>Оценка</h4>
             <div>
-              1 + доля {num(d.score.share)} + скорость {num(d.score.speed)} + звук {num(d.score.audio)} = {num(d.score.total)}
+              1 + скорость {num(d.score.speed)} + состав {num(d.score.share)} + звук {num(d.score.audio)} = {num(d.score.total)}
             </div>
             {d.event && (
               <div>
@@ -106,8 +106,8 @@ export function TuningPanel({ stream, streams, profile, liveEntries }: {
           <section>
             <h4>За 5 минут</h4>
             <div className="spark-row">
-              <span className="muted">доля</span>
-              <Sparkline label="доля" values={shares} threshold={s?.detector.chat.minTriggerShare ?? 0} max={Math.max(s?.detector.score.shareFull ?? 0, ...shares)} />
+              <span className="muted">состав</span>
+              <Sparkline label="состав" values={shares} threshold={s?.detector.chat.minTriggerShare ?? 0} max={Math.max(s?.detector.score.shareFull ?? 0, ...shares)} />
             </div>
             <div className="spark-row">
               <span className="muted">скорость</span>

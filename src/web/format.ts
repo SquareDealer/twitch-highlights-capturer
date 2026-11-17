@@ -34,7 +34,9 @@ export function clipSummary(c: Pick<FeedClip, 'signals'>): string {
   const parts: string[] = [];
   if (s.chatSpike > 0) parts.push(`чат ×${num(s.chatSpike)}`);
   if (s.triggerShare !== undefined) {
-    if (Math.round(s.triggerShare * 100) > 0) parts.push(`реакция ${Math.round(s.triggerShare * 100)} % активных`);
+    // Clips of the older rule carry activeAuthors: their share is a share of active chatters.
+    const pct = Math.round(s.triggerShare * 100);
+    if (pct > 0) parts.push(s.activeAuthors !== undefined ? `реакция ${pct} % активных` : `состав ${pct} %`);
   } else {
     if (Math.round(s.laughShare * 100) > 0) parts.push(`смех ${Math.round(s.laughShare * 100)} %`);
     if (Math.round(s.reactionShare * 100) > 0) parts.push(`реакция ${Math.round(s.reactionShare * 100)} %`);

@@ -28,7 +28,7 @@ const stream = (over: Partial<StreamStatus> = {}): StreamStatus => ({
 });
 const props = (over: Partial<Parameters<typeof ProfileEditor>[0]> = {}) => ({ profile: P, streams: [], ...over });
 const view = (over: Partial<Parameters<typeof ProfileEditor>[0]> = {}) => render(<ProfileEditor {...props(over)} />);
-const share = () => screen.getByLabelText(/Доля активных, не меньше/) as HTMLInputElement;
+const share = () => screen.getByLabelText(/Состав: триггерных сообщений, не меньше/) as HTMLInputElement;
 
 beforeEach(() => {
   mocks.updateProfile.mockReset();
@@ -37,7 +37,7 @@ afterEach(cleanup);
 
 it('renders every field with its label and the current value', () => {
   const { container } = view();
-  expect(share().value).toBe('0,05');
+  expect(share().value).toBe('0,5');
   expect(container.querySelectorAll('input[inputmode="decimal"]').length).toBe(28);
   expect(screen.getByLabelText('Название')).toBeTruthy();
   expect(screen.getByLabelText('Смех')).toBeTruthy();
@@ -52,17 +52,17 @@ it('warns which running streams the edit will hit', () => {
 it('saves parsed settings and reports how many streams got them', async () => {
   mocks.updateProfile.mockResolvedValue(P);
   view({ streams: [stream({ channel: 'alice', profile: { id: P.id, name: P.name } })] });
-  fireEvent.change(share(), { target: { value: '0,08' } });
+  fireEvent.change(share(), { target: { value: '0,6' } });
   fireEvent.click(screen.getByText('Сохранить'));
   await waitFor(() => expect(mocks.updateProfile).toHaveBeenCalled());
-  expect(mocks.updateProfile.mock.calls[0]![1].settings.detector.chat.minTriggerShare).toBe(0.08);
+  expect(mocks.updateProfile.mock.calls[0]![1].settings.detector.chat.minTriggerShare).toBe(0.6);
   expect(await screen.findByText('применено к эфирам: 1')).toBeTruthy();
 });
 
 it('says "сохранено" when no stream uses the profile', async () => {
   mocks.updateProfile.mockResolvedValue(P);
   view();
-  fireEvent.change(share(), { target: { value: '0,08' } });
+  fireEvent.change(share(), { target: { value: '0,6' } });
   fireEvent.click(screen.getByText('Сохранить'));
   expect(await screen.findByText('сохранено')).toBeTruthy();
 });
@@ -89,7 +89,7 @@ it('shows a server error without a path under the buttons', async () => {
   const { ApiError } = await import('../../src/web/api');
   mocks.updateProfile.mockRejectedValue(new ApiError(0, 'Нет связи с сервером'));
   view();
-  fireEvent.change(share(), { target: { value: '0,08' } });
+  fireEvent.change(share(), { target: { value: '0,6' } });
   fireEvent.click(screen.getByText('Сохранить'));
   expect(await screen.findByText('Нет связи с сервером')).toBeTruthy();
 });
@@ -97,7 +97,7 @@ it('shows a server error without a path under the buttons', async () => {
 it('saves on Enter in an input', async () => {
   mocks.updateProfile.mockResolvedValue(P);
   view();
-  fireEvent.change(share(), { target: { value: '0,08' } });
+  fireEvent.change(share(), { target: { value: '0,6' } });
   fireEvent.keyDown(share(), { key: 'Enter' });
   await waitFor(() => expect(mocks.updateProfile).toHaveBeenCalledTimes(1));
 });
@@ -107,27 +107,27 @@ it('reverts the form', () => {
   const save = screen.getByText('Сохранить') as HTMLButtonElement;
   const revert = screen.getByText('Отменить изменения') as HTMLButtonElement;
   expect(save.disabled && revert.disabled).toBe(true);
-  fireEvent.change(share(), { target: { value: '0,08' } });
+  fireEvent.change(share(), { target: { value: '0,6' } });
   expect(save.disabled || revert.disabled).toBe(false);
   fireEvent.click(revert);
-  expect(share().value).toBe('0,05');
+  expect(share().value).toBe('0,5');
   expect(save.disabled && revert.disabled).toBe(true);
 });
 
 it('resets the form when another profile is shown', () => {
   const { rerender } = view();
-  fireEvent.change(share(), { target: { value: '0,08' } });
+  fireEvent.change(share(), { target: { value: '0,6' } });
   rerender(<ProfileEditor {...props({ profile: { ...P, id: 'p2', name: 'Другой' } })} />);
-  expect(share().value).toBe('0,05');
+  expect(share().value).toBe('0,5');
   expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('Другой');
 });
 
 it('keeps unsaved edits when the same profile is updated from outside, but takes the update when clean', () => {
   const updated = { ...P, updatedAt: '2026-02-01T00:00:00Z', settings: { ...P.settings, cut: { ...P.settings.cut, postRollMs: 7000 } } };
   const { rerender, unmount } = view();
-  fireEvent.change(share(), { target: { value: '0,08' } });
+  fireEvent.change(share(), { target: { value: '0,6' } });
   rerender(<ProfileEditor {...props({ profile: updated })} />);
-  expect(share().value).toBe('0,08');
+  expect(share().value).toBe('0,6');
   expect((screen.getByLabelText('Запас после события') as HTMLInputElement).value).toBe('10000');
   unmount();
 

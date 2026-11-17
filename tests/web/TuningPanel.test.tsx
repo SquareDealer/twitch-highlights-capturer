@@ -17,8 +17,8 @@ vi.mock('../../src/web/api', () => {
 const profile: Profile = { id: 'p1', name: 'Крупный канал', isDefault: false, settings: settingsFromConfig(defaultConfig('/d')), createdAt: '', updatedAt: '' };
 const detail: DetectorDetail = {
   configVersion: 1, sinceStartMs: 720000,
-  chat: { messages: 40, authors: 20, baseline: 2, spike: 3, triggerMessages: 5, triggerAuthors: 4, laughMessages: 4, reactionMessages: 1, activeAuthors: 128, activeAuthorsRaw: 128, triggerShare: 0.031 },
-  conditions: { warm: true, messages: true, authors: true, share: false, fired: false },
+  chat: { messages: 40, authors: 20, baseline: 2, spike: 3, triggerMessages: 5, triggerAuthors: 4, laughMessages: 4, reactionMessages: 1, triggerShare: 0.125 },
+  conditions: { warm: true, spike: true, messages: true, authors: true, share: false, fired: false },
   audio: { db: -20, baselineDb: -30, deltaDb: 10, vad: 0.5, warm: true, spiking: false },
   score: { total: 1, share: 0, speed: 0, audio: 0 }, event: null,
 };
