@@ -144,3 +144,16 @@ textarea { width: 100%; resize: vertical; font-family: ui-monospace, Consolas, m
 .tchart-legend .k-secondary { border-top: 1px dashed var(--muted); }
 .tchart-legend .k-mark { width: 0; height: 10px; border-top: 0; border-left: 2px solid var(--ok); }
 .tuning .log-entry { padding: 2px 0; }
+
+/* Google Drive */
+.sync { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.sync .error { margin: 0; font-size: 13px; }
+a.badge { text-decoration: none; }
+.drive-step h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 16px; }
+.drive-step.done .chain-n { background: var(--ok); color: #06140d; }
+.drive-step .row input[type="text"] { flex: 1 1 220px; }
+.drive-step .howto { margin: 0 0 14px; padding-left: 20px; font-size: 13px; }
+.drive-step .howto a { color: var(--accent); }
+.redirect { background: #14161d; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; user-select: all; }
+.folder-list { list-style: none; margin: 0 0 14px; padding: 0; }
+.folder-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }

@@ -10,7 +10,7 @@ class FakeES {
   constructor() {
     FakeES.last = this;
   }
-  addEventListener() {}
+  addEventListener(_name?: string, _fn?: (e: { data: string }) => void) {}
   close() {}
 }
 
@@ -55,5 +55,22 @@ it('delivers profiles and tuning events', () => {
   listeners.get('tuning')!({ data: JSON.stringify({ streamId: 's1', entry: { tMs: 1 } }) });
   expect(profiles).toHaveBeenCalledWith([{ id: 'p1' }]);
   expect(tuning).toHaveBeenCalledWith({ streamId: 's1', entry: { tMs: 1 } });
+  stop();
+});
+
+it('delivers drive frames', () => {
+  const listeners: Record<string, (e: { data: string }) => void> = {};
+  class ES extends FakeES {
+    override addEventListener(name?: string, fn?: (e: { data: string }) => void) {
+      if (name && fn) listeners[name] = fn;
+    }
+  }
+  vi.stubGlobal('EventSource', ES);
+  const drive = vi.fn();
+  const stop = subscribe({ drive });
+  listeners.drive!({ data: JSON.stringify({ connected: true, sync: { running: true } }) });
+  expect(drive).toHaveBeenCalledWith({ connected: true, sync: { running: true } });
+  listeners.drive!({ data: '{oops' });
+  expect(drive).toHaveBeenCalledTimes(1);
   stop();
 });

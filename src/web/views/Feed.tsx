@@ -1,9 +1,14 @@
 import { useMemo, useState } from 'react';
 import type { ClipStatus } from '../../service/types';
 import type { PublicClip } from '../api';
+import type { DriveStatus } from '../../service/http';
 import { ClipCard } from '../components/ClipCard';
+import { SyncButton } from '../components/SyncButton';
 
-export function Feed({ clips, onChange }: { clips: PublicClip[]; onChange: (c: PublicClip) => void }) {
+export function Feed({ clips, onChange, drive = null, onSync = async () => {}, onOpenDrive = () => {} }: {
+  clips: PublicClip[]; onChange: (c: PublicClip) => void;
+  drive?: DriveStatus | null; onSync?: () => Promise<void>; onOpenDrive?: () => void;
+}) {
   const [channel, setChannel] = useState('');
   const [status, setStatus] = useState<'' | ClipStatus>('');
   const [sort, setSort] = useState<'time' | 'score'>('time');
@@ -33,6 +38,7 @@ export function Feed({ clips, onChange }: { clips: PublicClip[]; onChange: (c: P
           <option value="time">По времени</option>
           <option value="score">По оценке</option>
         </select>
+        <SyncButton drive={drive} onSync={onSync} onOpenDrive={onOpenDrive} />
       </div>
       {shown.length === 0 ? <p className="muted empty">Клипов пока нет</p> : shown.map((c) => <ClipCard key={c.id} clip={c} onChange={onChange} />)}
     </section>

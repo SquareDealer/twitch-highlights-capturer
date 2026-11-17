@@ -81,3 +81,18 @@ it('shows the profile a clip was cut with', () => {
   render(<ClipCard clip={clip({ profileName: null })} onChange={() => {}} />);
   expect(screen.queryByText(/профиль/)).toBeNull();
 });
+
+it('links to the file on Google Drive once uploaded', () => {
+  render(<ClipCard clip={clip({ status: 'taken', drive: { status: 'synced', url: 'https://drive.google.com/file/d/F1/view', error: null } })} onChange={() => {}} />);
+  const a = screen.getByText('на Диске') as HTMLAnchorElement;
+  expect([a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')]).toEqual(['https://drive.google.com/file/d/F1/view', '_blank', 'noreferrer']);
+});
+it('shows a failed upload with its reason', () => {
+  render(<ClipCard clip={clip({ status: 'taken', drive: { status: 'failed', url: null, error: 'socket hang up' } })} onChange={() => {}} />);
+  expect(screen.getByText('ошибка выгрузки').getAttribute('title')).toBe('socket hang up');
+});
+it('shows nothing about Drive on a clip that was never uploaded', () => {
+  render(<ClipCard clip={clip({ drive: null })} onChange={() => {}} />);
+  expect(screen.queryByText('на Диске')).toBeNull();
+  expect(screen.queryByText('ошибка выгрузки')).toBeNull();
+});

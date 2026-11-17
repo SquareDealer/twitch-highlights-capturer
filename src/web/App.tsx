@@ -3,13 +3,18 @@ import type { StreamStatus } from '../service/streams';
 import type { Profile } from '../service/profiles';
 import type { ProfileSettings } from '../service/profileSettings';
 import type { TuningEntry } from '../service/tuningLog';
+import type { DriveStatus } from '../service/http';
 import { api, ApiError, setUnauthorizedHandler, subscribe, type CuttingState, type Notice, type PublicClip } from './api';
+import { Drive } from './views/Drive';
 import { Feed } from './views/Feed';
 import { Login } from './views/Login';
 import { Profiles } from './views/Profiles';
 import { Streams } from './views/Streams';
 
-type Screen = 'checking' | 'login' | 'streams' | 'feed' | 'profiles';
+type Screen = 'checking' | 'login' | 'streams' | 'feed' | 'profiles' | 'drive';
+const TABS: Screen[] = ['streams', 'feed', 'profiles', 'drive'];
+/** Google's redirect comes back to /#drive: open that tab. */
+const wantsDrive = () => window.location.hash === '#drive';
 
 const upsert = (list: PublicClip[], c: PublicClip): PublicClip[] => (list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? c : x)) : [c, ...list]);
 
@@ -24,7 +29,8 @@ export function App() {
   const [tuningLive, setTuningLive] = useState<Record<string, TuningEntry[]>>({});
   const [clips, setClips] = useState<PublicClip[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const authed = screen === 'streams' || screen === 'feed' || screen === 'profiles';
+  const [drive, setDrive] = useState<DriveStatus | null>(null);
+  const authed = TABS.includes(screen);
 
   const load = useCallback(async () => {
     try {
@@ -35,7 +41,8 @@ export function App() {
       setProfiles(s.profiles);
       setFactory(s.factorySettings);
       setClips(await api.clips({ limit: 200 }));
-      setScreen((cur) => (cur === 'feed' || cur === 'profiles' ? cur : 'streams'));
+      setDrive(await api.drive());
+      setScreen((cur) => (TABS.includes(cur) ? cur : wantsDrive() ? 'drive' : 'streams'));
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) setScreen('login');
       else setNotice({ level: 'error', message: e instanceof Error ? e.message : String(e) });
@@ -65,6 +72,8 @@ export function App() {
       notice: setNotice,
       cutting: setCutting,
       profiles: setProfiles,
+      // The frame has no redirect address (it depends on how this page was opened): keep the one already known.
+      drive: (d) => setDrive((cur) => (cur ? { ...cur, ...d } : cur)),
       tuning: ({ streamId, entry }) =>
         setTuningLive((m) => ({ ...m, [streamId]: [...(m[streamId] ?? []), entry].slice(-100) })),
       unauthorized: () => setScreen('login'),
@@ -81,6 +90,7 @@ export function App() {
           <button className={screen === 'streams' ? 'tab on' : 'tab'} onClick={() => setScreen('streams')}>Эфиры</button>
           <button className={screen === 'feed' ? 'tab on' : 'tab'} onClick={() => setScreen('feed')}>Лента</button>
           <button className={screen === 'profiles' ? 'tab on' : 'tab'} onClick={() => setScreen('profiles')}>Профили</button>
+          <button className={screen === 'drive' ? 'tab on' : 'tab'} onClick={() => setScreen('drive')}>Диск</button>
         </nav>
         <button className="link" onClick={() => api.logout().finally(() => setScreen('login'))}>Выйти</button>
       </header>
@@ -91,8 +101,13 @@ export function App() {
         <Streams streams={streams} multiStream={multi} cutting={cutting} profiles={profiles} {...(factory ? { factory } : {})} tuningLive={tuningLive} onMode={setMulti} />
       ) : screen === 'profiles' ? (
         <Profiles profiles={profiles} streams={streams} {...(factory ? { factory } : {})} />
+      ) : screen === 'drive' ? (
+        <Drive drive={drive} onChange={setDrive} />
       ) : (
-        <Feed clips={clips} onChange={(c) => setClips((l) => upsert(l, c))} />
+        <Feed
+          clips={clips} onChange={(c) => setClips((l) => upsert(l, c))} drive={drive} onOpenDrive={() => setScreen('drive')}
+          onSync={async () => { const sync = await api.driveSync(); setDrive((cur) => (cur ? { ...cur, sync } : cur)); }}
+        />
       )}
     </div>
   );

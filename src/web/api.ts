@@ -4,6 +4,12 @@ import type { Profile } from '../service/profiles';
 import type { ProfileSettings } from '../service/profileSettings';
 import type { TuningEntry } from '../service/tuningLog';
 import type { DetectorSignals } from '../service/detectorProcess';
+import type { DriveStatus } from '../service/http';
+import type { DriveFolder } from '../service/driveSettings';
+import type { DriveSyncState } from '../service/driveSync';
+
+/** The `drive` SSE frame: the status without the parts that depend on the address the page was opened at. */
+export type DriveState = Omit<DriveStatus, 'redirectUri' | 'redirectProblem'>;
 
 export interface PublicClipDrive { status: 'synced' | 'failed'; url: string | null; error: string | null }
 export type PublicClip = Omit<FeedClip, 'mp4Path' | 'jsonPath' | 'drive'> & { drive?: PublicClipDrive | null };
@@ -97,6 +103,13 @@ export const api = {
     const qs = q.toString();
     return request<PublicClip[]>('GET', `/api/clips${qs ? `?${qs}` : ''}`);
   },
+  drive: () => request<DriveStatus>('GET', '/api/drive'),
+  setDriveCredentials: (clientId: string, clientSecret: string) => request<DriveStatus>('PUT', '/api/drive/credentials', { clientId, clientSecret }),
+  driveConnect: () => request<{ url: string }>('POST', '/api/drive/connect'),
+  driveDisconnect: () => request<void>('POST', '/api/drive/disconnect'),
+  driveFolders: (name: string) => request<DriveFolder[]>('GET', `/api/drive/folders?name=${encodeURIComponent(name)}`),
+  setDriveFolder: (target: { id: string } | { link: string }) => request<DriveStatus>('PUT', '/api/drive/folder', target),
+  driveSync: () => request<DriveSyncState>('POST', '/api/drive/sync'),
   setClipStatus: (id: string, status: 'new' | 'taken' | 'rejected') =>
     request<PublicClip>('POST', `/api/clips/${encodeURIComponent(id)}/status`, { status }),
 };
@@ -110,6 +123,7 @@ export interface SubscribeHandlers {
   cutting?: (c: CuttingState) => void;
   profiles?: (p: Profile[]) => void;
   tuning?: (e: { streamId: string; entry: TuningEntry }) => void;
+  drive?: (d: DriveState) => void;
   unauthorized?: () => void;
 }
 
@@ -137,6 +151,7 @@ export function subscribe(h: SubscribeHandlers): () => void {
     on('cutting', h.cutting);
     on('profiles', h.profiles);
     on('tuning', h.tuning);
+    on('drive', h.drive);
     // Every open, the first one included: anything that changed between the initial load and the
     // subscription (or during a reconnect) is not replayed by the server, so the caller refetches.
     es.onopen = () => h.open?.();

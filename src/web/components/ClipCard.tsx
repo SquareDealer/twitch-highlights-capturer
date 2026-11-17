@@ -59,6 +59,10 @@ export function ClipCard({ clip, onChange }: { clip: PublicClip; onChange: (c: P
             </>
           )}
           {playable && <a className="button" href={`${src}?download=1`}>Скачать</a>}
+          {clip.drive?.status === 'synced' && (clip.drive.url
+            ? <a className="badge ok" href={clip.drive.url} target="_blank" rel="noreferrer">на Диске</a>
+            : <span className="badge ok">на Диске</span>)}
+          {clip.drive?.status === 'failed' && <span className="badge warn" title={clip.drive.error ?? undefined}>ошибка выгрузки</span>}
           <span className="status-label">{STATUS_LABEL[clip.status]}</span>
         </div>
         {error && <div className="error">{error}</div>}
