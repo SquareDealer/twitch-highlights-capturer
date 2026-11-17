@@ -1,9 +1,10 @@
 # The web service (not the Electron app): Node service + Python detector + streamlink + ffmpeg.
-# Node 24 (npm 11): the version the lockfile was written with; npm 10 refuses it in `npm ci`.
+# Node 24: the version the project is developed and tested on.
 FROM node:24-bookworm-slim
 
+# g++ and make: better-sqlite3 is compiled during `npm install`.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-venv ffmpeg ca-certificates curl \
+ && apt-get install -y --no-install-recommends python3 python3-venv ffmpeg ca-certificates curl g++ make \
  && rm -rf /var/lib/apt/lists/*
 
 # One virtualenv for the detector's dependencies and streamlink; its bin is first on PATH,
@@ -17,8 +18,10 @@ WORKDIR /app
 
 # Dependencies first: this layer is rebuilt only when the lockfile changes. Electron is a dev
 # dependency of the desktop app; its binary is not needed here.
+# `npm install`, not `npm ci`: the lockfile is written on Windows and lacks two optional Linux-only
+# packages, which `npm ci` refuses; `install` keeps every locked version and adds just those.
 COPY package.json package-lock.json ./
-RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --no-audit --no-fund
+RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install --no-audit --no-fund
 
 # The Silero VAD model (v5) is not in the repository.
 ARG SILERO_VAD_URL=https://github.com/snakers4/silero-vad/raw/v5.1.2/src/silero_vad/data/silero_vad.onnx
