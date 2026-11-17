@@ -124,8 +124,10 @@ it('resets the draft', async () => {
 it('keeps the speed threshold between the end-of-event speed and the full-score speed', async () => {
   panel();
   fireEvent.change(speedInput(), { target: { value: '1,2' } });
+  fireEvent.blur(speedInput());
   expect(screen.getByRole('slider', { name: 'Скорость чата: порог' }).getAttribute('aria-valuenow')).toBe('1.5');
   fireEvent.change(speedInput(), { target: { value: '9' } });
+  fireEvent.blur(speedInput());
   expect(screen.getByRole('slider', { name: 'Скорость чата: порог' }).getAttribute('aria-valuenow')).toBe('5.9');
 });
 

@@ -249,3 +249,29 @@ it('disconnect forgets the account', async () => {
 it('rejects Drive changes from a foreign origin', async () => {
   expect((await call('PUT', '/api/drive/credentials', { clientId: 'a', clientSecret: 'b' }, cookie, { Origin: 'https://evil.example' })).status).toBe(403);
 });
+
+it('tells the open pages how many clips wait for Sync as soon as a clip is taken', async () => {
+  await keys();
+  await connect();
+  await call('PUT', '/api/drive/folder', { id: 'SORT1234567890' });
+  clips.insert({ ...takenClip('c1'), status: 'new' });
+  const events = await fetch(`${base}/api/events`, { headers: { Cookie: cookie } });
+  const reader = events.body!.getReader();
+  const dec = new TextDecoder();
+  let text = '';
+  const until = async (needle: string) => {
+    while (!text.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('stream ended: ' + text);
+      text += dec.decode(value);
+    }
+  };
+  await until(':');
+  expect((await call('POST', '/api/clips/c1/status', { status: 'taken' })).status).toBe(200);
+  await until('event: drive');
+  await until('"pending":1');
+  http.broadcast('clip', { id: 'from-the-janitor' });
+  text = '';
+  await until('event: drive');
+  await reader.cancel();
+});

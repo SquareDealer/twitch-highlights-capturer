@@ -40,8 +40,32 @@ it('takes an exact number from the input and ignores text that is not a number',
   expect(onChange).not.toHaveBeenCalled();
   fireEvent.change(input, { target: { value: '3,5' } });
   expect(onChange).toHaveBeenLastCalledWith(3.5);
+  fireEvent.change(input, { target: { value: '2,25' } });
+  expect(onChange).toHaveBeenLastCalledWith(2.25); // a typed value is not snapped to the slider step
+});
+it('does not fight the typing of a number that is out of range on the way: it is fitted on blur or Enter', () => {
+  const { onChange } = view({ min: 1.5, max: 5.9 });
+  const input = screen.getByLabelText('Скорость чата: значение порога') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: '1' } }); // on the way to 1,8
+  expect(onChange).not.toHaveBeenCalled();
+  expect(input.value).toBe('1');
+  fireEvent.change(input, { target: { value: '1,8' } });
+  expect(onChange).toHaveBeenLastCalledWith(1.8);
   fireEvent.change(input, { target: { value: '999' } });
-  expect(onChange).toHaveBeenLastCalledWith(20);
+  expect(onChange).toHaveBeenCalledTimes(1);
+  fireEvent.blur(input);
+  expect(onChange).toHaveBeenLastCalledWith(5.9);
+  fireEvent.change(input, { target: { value: '0,2' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(onChange).toHaveBeenLastCalledWith(1.5);
+});
+it('grows the scale with the data up to twice the slider range', () => {
+  const y = (values: number[]) => Number(view({ values }).container.querySelector('.threshold')!.getAttribute('y1'));
+  expect(y([1, 9])).toBeCloseTo(72 - (2 / 9) * 72, 1);   // top = 9
+  cleanup();
+  expect(y([1, 39])).toBeCloseTo(72 - (2 / 12) * 72, 1); // top capped at 2 × 6
+  cleanup();
+  expect(y([])).toBeCloseTo(72 - (2 / 6) * 72, 1);       // no data: the slider range
 });
 it('shows a share in percent and stores a fraction', () => {
   const { onChange } = view({ label: 'Состав', def: SHARE, threshold: 0.5, savedThreshold: 0.5, values: [0.2, 0.8] });

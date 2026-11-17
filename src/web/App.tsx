@@ -5,6 +5,7 @@ import type { ProfileSettings } from '../service/profileSettings';
 import type { TuningEntry } from '../service/tuningLog';
 import type { DriveStatus } from '../service/http';
 import { api, ApiError, setUnauthorizedHandler, subscribe, type CuttingState, type Notice, type PublicClip } from './api';
+import { takeDriveHash } from './nav';
 import { Drive } from './views/Drive';
 import { Feed } from './views/Feed';
 import { Login } from './views/Login';
@@ -13,8 +14,7 @@ import { Streams } from './views/Streams';
 
 type Screen = 'checking' | 'login' | 'streams' | 'feed' | 'profiles' | 'drive';
 const TABS: Screen[] = ['streams', 'feed', 'profiles', 'drive'];
-/** Google's redirect comes back to /#drive: open that tab. */
-const wantsDrive = () => window.location.hash === '#drive';
+
 
 const upsert = (list: PublicClip[], c: PublicClip): PublicClip[] => (list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? c : x)) : [c, ...list]);
 
@@ -42,7 +42,8 @@ export function App() {
       setFactory(s.factorySettings);
       setClips(await api.clips({ limit: 200 }));
       setDrive(await api.drive());
-      setScreen((cur) => (TABS.includes(cur) ? cur : wantsDrive() ? 'drive' : 'streams'));
+      const fromGoogle = takeDriveHash();
+      setScreen((cur) => (fromGoogle ? 'drive' : TABS.includes(cur) ? cur : 'streams'));
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) setScreen('login');
       else setNotice({ level: 'error', message: e instanceof Error ? e.message : String(e) });

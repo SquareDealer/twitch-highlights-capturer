@@ -157,6 +157,8 @@ export async function startHttp(
   const sse = new Map<ServerResponse, string>();
 
   const broadcast = (event: string, data: unknown): void => {
+    // Any clip change (a decision in the feed, the janitor, an upload) can change how many clips wait for «Sync».
+    if (event === 'clip') pushDrive();
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sse.keys()) {
       try {
@@ -195,9 +197,9 @@ export async function startHttp(
     const origin = requestOrigin(req);
     return { ...(await driveState()), redirectUri: `${origin}${DRIVE_CALLBACK_PATH}`, redirectProblem: redirectProblem(origin) };
   };
-  const pushDrive = (): void => {
+  function pushDrive(): void {
     void driveState().then((st) => broadcast('drive', st), () => undefined);
-  };
+  }
   deps.drive.sync.on('state', pushDrive);
   deps.drive.sync.on('clip', onClip);
   /** A Drive call made for a route: a revoked grant signs out and becomes a 409, other failures a 502. */

@@ -132,6 +132,8 @@ export class DriveSync extends EventEmitter {
       }
       const previous = clip.drive?.folderId === folderId ? clip.drive.fileId : null;
       if (!existsSync(clip.mp4Path)) {
+        // The file is gone for good: say so on the card and do not queue the clip again.
+        this.deps.clips.update(id, { fileDeleted: true });
         this.mark(id, { fileId: previous, folderId, status: 'failed', error: FILE_GONE, syncedAt: null });
         this.failed++;
       } else {

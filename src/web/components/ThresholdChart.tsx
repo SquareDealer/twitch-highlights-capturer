@@ -30,7 +30,9 @@ export function ThresholdChart({ label, values, marks, threshold, savedThreshold
 
   const lo = Math.max(def.min, min ?? def.min);
   const hi = Math.min(def.max, max ?? def.max);
-  const fit = (v: number) => Math.min(hi, Math.max(lo, clampField(def, v)));
+  const within = (v: number) => Math.min(hi, Math.max(lo, v));
+  /** For the line, the arrows and the buttons: on the step grid. A typed number keeps its own precision. */
+  const fit = (v: number) => within(clampField(def, v));
 
   // The input keeps what the user typed while it still means the current threshold ('2,' stays '2,').
   useEffect(() => {
@@ -42,7 +44,7 @@ export function ThresholdChart({ label, values, marks, threshold, savedThreshold
   const clean = values.map((v) => (Number.isFinite(v) ? v : 0));
   // One huge value (the burst while the baseline is still empty) must not flatten the rest: the scale grows
   // with the data only up to twice the slider range; higher points are clipped at the top edge.
-  const top = Math.max(def.sliderMax, threshold, savedThreshold, Math.min(def.sliderMax * 2, ...clean)) || 1;
+  const top = Math.max(def.sliderMax, threshold, savedThreshold, Math.min(def.sliderMax * 2, Math.max(0, ...clean))) || 1;
   const y = (v: number) => H - Math.max(0, Math.min(1, v / top)) * H;
   const step = clean.length > 1 ? W / (clean.length - 1) : 0;
   const x = (i: number) => (clean.length > 1 ? i * step : W / 2);
@@ -59,10 +61,22 @@ export function ThresholdChart({ label, values, marks, threshold, savedThreshold
     e.preventDefault();
     onChange(fit(threshold + dir * def.step));
   };
+  // While typing, only a number already inside the range is taken: «1» on the way to «1,8» must not be
+  // rewritten to the lower bound under the user's fingers. Blur or Enter fits whatever was typed.
+  const typedValue = (value: string): number | null => {
+    const typed = parseNumber(value);
+    return typed === null ? null : fromDisplay(def, typed);
+  };
   const onText = (value: string) => {
     setText(value);
-    const typed = parseNumber(value);
-    if (typed !== null) onChange(fit(fromDisplay(def, typed)));
+    const v = typedValue(value);
+    if (v !== null && v >= lo && v <= hi) onChange(v);
+  };
+  const commitText = () => {
+    const v = typedValue(text);
+    const next = v === null ? threshold : within(v);
+    if (next !== threshold) onChange(next);
+    setText(num(toDisplay(def, next), 4));
   };
 
   return (
@@ -74,7 +88,8 @@ export function ThresholdChart({ label, values, marks, threshold, savedThreshold
           <input
             type="text" inputMode="decimal" aria-label={`${label}: значение порога`}
             value={text} onChange={(e) => onText(e.target.value)}
-            onBlur={() => setText(num(toDisplay(def, threshold), 4))}
+            onBlur={commitText}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitText(); }}
           />
           <span className="muted unit">{def.unit}</span>
           <button type="button" aria-label={`${label}: больше`} onClick={() => onChange(fit(threshold + def.step))}>+</button>

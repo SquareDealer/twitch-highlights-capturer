@@ -134,8 +134,11 @@ it('marks a clip whose file is gone and carries on', async () => {
   const { s } = make();
   await run(s);
   expect(clips.get('1')!.drive).toMatchObject({ status: 'failed', error: 'Файл клипа не найден на диске', fileId: null });
+  expect(clips.get('1')!.fileDeleted).toBe(true); // the feed shows «файл удалён» and the clip is not queued again
   expect(clips.get('2')!.drive!.status).toBe('synced');
-  expect(s.state()).toMatchObject({ done: 2, failed: 1, pending: 1, lastError: null });
+  expect(s.state()).toMatchObject({ done: 2, failed: 1, pending: 0, lastError: null });
+  await run(s);
+  expect(s.state()).toMatchObject({ total: 0, failed: 0, pending: 0 });
 });
 
 it('a failure of one upload does not stop the rest, and the failed clip goes again next time', async () => {
