@@ -36,6 +36,8 @@ export interface AppState {
   mode: ModeState;
   cutting: CuttingState;
   profiles: Profile[];
+  /** The values the service ships with: what «вернуть» in the profile editor restores. */
+  factorySettings: ProfileSettings;
 }
 export interface Notice {
   level: 'info' | 'warning' | 'error';

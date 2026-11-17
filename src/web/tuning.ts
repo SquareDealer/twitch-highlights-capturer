@@ -1,4 +1,4 @@
-import { DICTIONARIES, FIELDS, type ProfileSettings } from '../service/profileSettings';
+import { DICTIONARIES, FIELDS, type FieldDef, type ProfileSettings } from '../service/profileSettings';
 import type { DetectorDetail, DetectorSignals } from '../service/detectorProcess';
 import type { TuningEntry } from '../service/tuningLog';
 import { duration, num, triggerLabel } from './format';
@@ -116,4 +116,44 @@ export function storeTuning(channel: string, on: boolean): void {
   } catch {
     /* storage unavailable: the switch just is not remembered */
   }
+}
+
+/** The thresholds the trigger rule compares a second against. */
+export interface Thresholds { minSpike: number; minTriggerShare: number; minTriggerMessages: number; minTriggerAuthors: number }
+
+export const thresholdsOf = (s: ProfileSettings): Thresholds => {
+  const c = s.detector.chat;
+  return { minSpike: c.minSpike, minTriggerShare: c.minTriggerShare, minTriggerMessages: c.minTriggerMessages, minTriggerAuthors: c.minTriggerAuthors };
+};
+
+/** The detector's rule (EventAssembler.conditions) applied to a stored frame with other thresholds.
+ *  null: the frame carries no detail and cannot be judged. */
+export function firedWith(f: DetectorSignals, t: Thresholds): boolean | null {
+  const d = f.detail;
+  if (!d) return null;
+  const c = d.chat;
+  return (
+    d.conditions.warm && c.spike >= t.minSpike && c.messages > 0 && c.triggerShare >= t.minTriggerShare &&
+    c.triggerMessages >= t.minTriggerMessages && c.triggerAuthors >= t.minTriggerAuthors
+  );
+}
+
+/** Indexes of the frames that start a firing: fired, and the previous judged frame did not. */
+export function firingStarts(frames: DetectorSignals[], t: Thresholds): number[] {
+  const out: number[] = [];
+  let prev = false;
+  frames.forEach((f, i) => {
+    const fired = firedWith(f, t);
+    if (fired === null) return;
+    if (fired && !prev) out.push(i);
+    prev = fired;
+  });
+  return out;
+}
+
+/** A value brought into the field's min…max and onto its step grid; not a number → min. */
+export function clampField(def: FieldDef, v: number): number {
+  if (!Number.isFinite(v)) return def.min;
+  const stepped = Math.round(v / def.step) * def.step;
+  return Math.min(def.max, Math.max(def.min, Number(stepped.toFixed(6))));
 }

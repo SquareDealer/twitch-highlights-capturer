@@ -6,6 +6,7 @@ import { end, MIME, sendFile } from '../main/server';
 import { Sessions } from './auth';
 import type { createClipRepo } from './clipRepo';
 import type { ServiceConfig } from './config';
+import { factorySettings } from './profileSettings';
 import type { Profile, ProfileService } from './profiles';
 import type { StreamRegistry } from './streams';
 import type { ClipStatus, FeedClip } from './types';
@@ -189,7 +190,7 @@ export async function startHttp(
     }
 
     if (method === 'GET' && path === '/api/state') {
-      return json(res, 200, { streams: deps.registry.list(), mode: deps.registry.mode(), cutting: deps.cuttingPaused(), profiles: deps.profiles.list() });
+      return json(res, 200, { streams: deps.registry.list(), mode: deps.registry.mode(), cutting: deps.cuttingPaused(), profiles: deps.profiles.list(), factorySettings: factorySettings() });
     }
 
     if (method === 'GET' && path === '/api/events') {

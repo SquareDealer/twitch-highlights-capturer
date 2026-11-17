@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import type { DetectorDetail, DetectorSignals } from '../../src/service/detectorProcess';
 import { defaultConfig } from '../../src/service/config';
-import { settingsFromConfig } from '../../src/service/profileSettings';
-import { conditionRows, entryText, fromForm, mergeFrames, parseNumber, storeTuning, toForm, tuningStored, verdict } from '../../src/web/tuning';
+import { FIELDS, fromDisplay, settingsFromConfig, toDisplay } from '../../src/service/profileSettings';
+import { clampField, conditionRows, entryText, firedWith, firingStarts, fromForm, mergeFrames, parseNumber, storeTuning, thresholdsOf, toForm, tuningStored, verdict } from '../../src/web/tuning';
 
 const SEED = settingsFromConfig(defaultConfig('/d'));
 
@@ -89,4 +89,47 @@ it('orders frames by epoch first, so frames after a reconnect stay last', () => 
   expect(full).toHaveLength(300);
   expect(full[299]).toEqual(f(2, 5000));
   expect(mergeFrames([f(1, 1000)], [f(2, 1000)])).toHaveLength(2); // same tMs, different epochs
+});
+
+describe('the trigger rule on stored frames', () => {
+  const T = thresholdsOf(SEED);
+  const frame = (tMs: number, chat: Partial<DetectorDetail['chat']> = {}, warm = true): DetectorSignals => {
+    const c = { ...D.chat, spike: 3, messages: 10, triggerMessages: 6, triggerAuthors: 4, triggerShare: 0.6, ...chat };
+    const cond = {
+      warm, spike: c.spike >= 2, messages: c.triggerMessages >= 3, authors: c.triggerAuthors >= 2, share: c.triggerShare >= 0.5, fired: false,
+    };
+    cond.fired = cond.warm && cond.spike && cond.messages && cond.authors && cond.share;
+    return { tMs, chatSpike: c.spike, laughShare: 0, messages: c.messages, deltaDb: 0, vad: 0, warm, detail: { ...D, chat: c, conditions: cond } };
+  };
+  const cases = [frame(0), frame(1, { spike: 1.9 }), frame(2, { triggerShare: 0.49 }), frame(3, { triggerMessages: 2 }), frame(4, { triggerAuthors: 1 }), frame(5, {}, false)];
+
+  it('reads the four thresholds from a profile', () => expect(T).toEqual({ minSpike: 2, minTriggerShare: 0.5, minTriggerMessages: 3, minTriggerAuthors: 2 }));
+  it('agrees with the detector on every failing condition', () => {
+    expect(cases.map((f) => firedWith(f, T))).toEqual(cases.map((f) => f.detail!.conditions.fired));
+    expect(cases.map((f) => firedWith(f, T))).toEqual([true, false, false, false, false, false]);
+  });
+  it('cannot judge a frame without detail', () => {
+    expect(firedWith({ tMs: 0, chatSpike: 9, laughShare: 0, messages: 0, deltaDb: 0, vad: 0, warm: true }, T)).toBeNull();
+  });
+  it('follows the draft thresholds', () => expect(firedWith(frame(0, { spike: 1.9 }), { ...T, minSpike: 1.5 })).toBe(true));
+  it('counts the starts of firings, skipping frames it cannot judge', () => {
+    const F = () => frame(0);
+    const f = () => frame(0, { spike: 1 });
+    const blind: DetectorSignals = { tMs: 0, chatSpike: 0, laughShare: 0, messages: 0, deltaDb: 0, vad: 0, warm: true };
+    expect(firingStarts([f(), F(), F(), f(), F()], T)).toEqual([1, 4]);
+    expect(firingStarts([F(), blind, F()], T)).toEqual([0]);
+    expect(firingStarts([], T)).toEqual([]);
+  });
+  it('clamps a value to the field range and step', () => {
+    const def = FIELDS.find((x) => x.path === 'detector.chat.minSpike')!;
+    expect(clampField(def, 99)).toBe(20);
+    expect(clampField(def, 0)).toBe(1.1);
+    expect(clampField(def, 2.34)).toBe(2.3);
+    expect(clampField(def, NaN)).toBe(1.1);
+  });
+  it('converts display units both ways', () => {
+    const share = FIELDS.find((x) => x.path === 'detector.chat.minTriggerShare')!;
+    const pre = FIELDS.find((x) => x.path === 'cut.preRollMs')!;
+    expect([toDisplay(share, 0.55), fromDisplay(share, 55), toDisplay(pre, 15000), fromDisplay(pre, 7.5)]).toEqual([55, 0.55, 15, 7500]);
+  });
 });

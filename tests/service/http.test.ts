@@ -148,6 +148,7 @@ it('returns the state with streams, mode and cutting', async () => {
     mode: { multiStream: false, limit: 1 },
     cutting: { paused: true, reason: 'Мало места' },
     profiles: JSON.parse(JSON.stringify(profiles.list())),
+    factorySettings: settingsFromConfig(defaultConfig('')),
   });
 });
 
