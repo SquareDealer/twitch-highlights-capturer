@@ -1,0 +1,14 @@
+.git
+.superpowers
+node_modules
+out
+dist
+data
+config
+config.json
+*.log
+detector/.venv
+detector/models
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info

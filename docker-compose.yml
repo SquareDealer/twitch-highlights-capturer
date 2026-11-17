@@ -1,0 +1,14 @@
+services:
+  highlights:
+    build: .
+    image: twitch-highlights
+    restart: unless-stopped
+    init: true
+    # The host port can be changed with HL_PORT in a .env file next to this one.
+    ports:
+      - "${HL_PORT:-8080}:8080"
+    volumes:
+      - ./config:/config   # config.json (created on the first start, the password is printed in the logs)
+      - ./data:/data       # database, clips, stream buffer, Google Drive token
+    # On stop the service finishes cutting clips that are in progress.
+    stop_grace_period: 60s
