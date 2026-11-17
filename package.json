@@ -1,21 +1,28 @@
 {
   "name": "twitch-highlight-recorder",
-  "version": "0.1.0",
-  "description": "Twitch Highlight Recorder",
-  "main": "./out/main/index.js",
+  "version": "0.2.0",
+  "description": "Twitch Highlight Recorder — web version",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "start": "vite build --logLevel warn && tsx src/server/index.ts",
+    "serve": "tsx src/server/index.ts",
+    "build": "vite build",
+    "dev": "concurrently -k -n server,web -c magenta,cyan \"cross-env THR_DEV=1 tsx watch src/server/index.ts\" \"vite\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win nsis"
+    "test": "vitest run"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^6.3.0",
     "better-sqlite3": "^13.2.0",
     "google-auth-library": "^11.3.4",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "tsx": "^4.23.15",
+    "vite": "^8.3.8"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
@@ -23,14 +30,10 @@
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.3.0",
+    "concurrently": "^10.0.7",
     "cross-env": "^10.1.0",
-    "electron": "^45.3.2",
-    "electron-builder": "^26.18.0",
-    "electron-vite": "^6.0.0",
     "jsdom": "^31.0.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.8",
     "vitest": "^5.1.0"
   }
 }

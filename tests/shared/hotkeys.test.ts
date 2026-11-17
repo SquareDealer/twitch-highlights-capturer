@@ -1,5 +1,5 @@
 import type { UiState } from '@shared/types';
-import { resolveHotkey, type KeyInput } from '../../src/shared/hotkeys';
+import { parseHotkeyAction, resolveHotkey, type KeyInput } from '../../src/shared/hotkeys';
 
 const key = (code: string, o: Partial<KeyInput> = {}): KeyInput => ({ type: 'keyDown', code, control: false, alt: false, shift: false, meta: false, isAutoRepeat: false, ...o });
 const watch: UiState = { mode: 'watch', textInputFocused: false };
@@ -47,3 +47,14 @@ test('Ctrl+S → save только в редакторе, в том числе �
   expect(resolveHotkey(key('KeyS', { control: true, shift: true }), editor)).toBeNull();
   expect(resolveHotkey(key('KeyS', { control: true, isAutoRepeat: true }), editor)).toBeNull();
 });
+
+test.each([
+  [{ kind: 'marker', type: 7 }, { kind: 'marker', type: 7 }],
+  [{ kind: 'replay', extra: 1 }, { kind: 'replay' }],
+  [{ kind: 'toggleEditor' }, { kind: 'toggleEditor' }],
+  [{ kind: 'save' }, { kind: 'save' }],
+  [{ kind: 'marker', type: '7' }, null],
+  [{ kind: 'marker' }, null],
+  [{ kind: 'exit' }, null],
+  [undefined, null],
+])('parseHotkeyAction(%j) → %j', (input, expected) => expect(parseHotkeyAction(input)).toEqual(expected));

@@ -1,5 +1,4 @@
-import type { WebContents } from 'electron';
-import type { MarkerType, UiState } from '@shared/types';
+import type { MarkerType, UiState } from './types';
 
 export type HotkeyAction = { kind: 'marker'; type: MarkerType } | { kind: 'replay' } | { kind: 'toggleEditor' } | { kind: 'save' };
 
@@ -32,19 +31,18 @@ export function resolveHotkey(input: KeyInput, ui: UiState): HotkeyAction | null
   return null;
 }
 
-/**
- * Listens on the window's webContents, so keys are caught even when focus sits inside the Twitch iframe.
- * The wall-clock time is taken before anything else: it is what the marker gets anchored to.
- */
-export function attachHotkeys(webContents: WebContents, getUi: () => UiState, onAction: (a: HotkeyAction, wallMs: number) => void): void {
-  webContents.on('before-input-event', (event, input) => {
-    const wallMs = Date.now();
-    const action = resolveHotkey(
-      { type: input.type as KeyInput['type'], code: input.code, control: input.control, alt: input.alt, shift: input.shift, meta: input.meta, isAutoRepeat: input.isAutoRepeat },
-      getUi(),
-    );
-    if (!action) return;
-    event.preventDefault();
-    onAction(action, wallMs);
-  });
+/** Validates an action that arrived over HTTP; anything malformed becomes null. */
+export function parseHotkeyAction(value: unknown): HotkeyAction | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as { kind?: unknown; type?: unknown };
+  switch (v.kind) {
+    case 'marker':
+      return Number.isInteger(v.type) && (v.type as number) >= 1 && (v.type as number) <= 9 ? { kind: 'marker', type: v.type as MarkerType } : null;
+    case 'replay':
+    case 'toggleEditor':
+    case 'save':
+      return { kind: v.kind };
+    default:
+      return null;
+  }
 }

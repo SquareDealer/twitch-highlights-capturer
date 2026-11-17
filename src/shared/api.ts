@@ -1,6 +1,6 @@
 import type { ThrEvents, ThrHandlers } from './types';
 
-/** Method names per API group; the single source for both ipcMain registration and the preload bridge. */
+/** Method names per API group; the single source for both the server's allow-list and the web client. */
 export const THR_METHODS: { [G in keyof ThrHandlers]: Array<keyof ThrHandlers[G] & string> } = {
   capture: ['start', 'stop', 'status'],
   player: ['reportLatency'],
@@ -15,5 +15,7 @@ export const THR_METHODS: { [G in keyof ThrHandlers]: Array<keyof ThrHandlers[G]
 
 export const THR_EVENTS: Array<keyof ThrEvents> = ['capture:status', 'marker:prompt', 'moment:changed', 'drafts:changed', 'clips:changed', 'nav', 'editor:save', 'notice'];
 
-export const invokeChannel = (group: string, method: string) => `thr:${group}.${method}`;
-export const eventChannel = (event: string) => `thr:event:${event}`;
+/** `POST` target of one API call; the body is the JSON array of arguments. */
+export const rpcPath = (group: string, method: string) => `/api/rpc/${group}/${method}`;
+export const EVENTS_PATH = '/api/events';
+export const HOTKEY_PATH = '/api/hotkey';

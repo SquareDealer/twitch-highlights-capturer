@@ -21,7 +21,7 @@ export interface OAuthLike {
 export interface DriveAuthDeps {
   settings: SettingsStore;
   tokenFile: string;
-  /** Electron safeStorage in production: tokens never touch the disk in clear text. */
+  /** AES-GCM with a local key file in production (see platform.ts): tokens never touch the disk in clear text. */
   encrypt(plain: string): Buffer;
   decrypt(data: Buffer): string;
   openExternal(url: string): Promise<void>;

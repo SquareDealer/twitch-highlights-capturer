@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Notices } from './components/Notices';
+import { installHotkeys } from './hotkeys';
 import { AppStoreProvider, useAppStore, type View } from './store';
 import { EditorView } from './views/EditorView';
 import { LibraryView } from './views/LibraryView';
@@ -13,16 +14,18 @@ const TABS: Array<{ view: View; label: string }> = [
   { view: 'settings', label: 'Настройки' },
 ];
 
-const isTextInput = (el: Element | null) =>
-  el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || (el instanceof HTMLElement && el.isContentEditable);
-
 function Shell() {
   const { state, dispatch } = useAppStore();
 
+  const [online, setOnline] = useState(true);
+
   useEffect(() => {
     const thr = window.thr;
-    void thr.capture.status().then((status) => dispatch({ type: 'status', status }));
-    void thr.moment.active().then((moment) => dispatch({ type: 'moment', moment }));
+    const load = () => {
+      void thr.capture.status().then((status) => dispatch({ type: 'status', status }));
+      void thr.moment.active().then((moment) => dispatch({ type: 'moment', moment }));
+    };
+    load();
     const off = [
       thr.on('capture:status', (status) => dispatch({ type: 'status', status })),
       thr.on('moment:changed', (moment) => dispatch({ type: 'moment', moment })),
@@ -30,22 +33,23 @@ function Shell() {
       thr.on('notice', (notice) => dispatch({ type: 'notice', notice })),
       thr.on('nav', (nav) => dispatch({ type: 'view', view: nav.view, draftId: nav.draftId ?? null })),
     ];
-    return () => off.forEach((f) => f());
+    // After the backend restarts, the event stream reconnects by itself; the snapshot is reloaded.
+    const onConnection = (e: Event) => {
+      const connected = (e as CustomEvent<boolean>).detail;
+      setOnline(connected);
+      if (connected) load();
+    };
+    window.addEventListener('thr:connection', onConnection);
+    return () => {
+      off.forEach((f) => f());
+      window.removeEventListener('thr:connection', onConnection);
+    };
   }, [dispatch]);
 
-  // The main process decides which hotkeys apply from the current screen and whether a text field has focus.
-  useEffect(() => {
-    const mode = state.view === 'watch' ? 'watch' : state.view === 'editor' ? 'editor' : 'other';
-    const report = () => void window.thr.ui.setState({ mode, textInputFocused: isTextInput(document.activeElement) });
-    report();
-    const deferred = () => setTimeout(report, 0); // focusout fires before the next element is focused
-    document.addEventListener('focusin', report);
-    document.addEventListener('focusout', deferred);
-    return () => {
-      document.removeEventListener('focusin', report);
-      document.removeEventListener('focusout', deferred);
-    };
-  }, [state.view, state.prompt?.id]);
+  // Hotkeys are resolved in the page: it knows the current screen and whether a text field has focus.
+  const view = useRef(state.view);
+  view.current = state.view;
+  useEffect(() => installHotkeys(() => (view.current === 'watch' ? 'watch' : view.current === 'editor' ? 'editor' : 'other')), []);
 
   return (
     <div className="app">
@@ -57,6 +61,7 @@ function Shell() {
           </button>
         ))}
       </nav>
+      {!online && <div className="offline">Нет связи с приложением. Проверьте, что окно терминала с ним открыто, — страница переподключится сама.</div>}
       <main className="content">
         {/* The watch view stays mounted so the stream keeps playing while other screens are open. */}
         <div className="pane" hidden={state.view !== 'watch'}>
