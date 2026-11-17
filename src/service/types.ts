@@ -13,9 +13,13 @@ export interface DetectorEvent {
   scores: { total: number; share: number; speed: number; audio: number };
   signals: {
     chatSpike: number;
-    /** Absent on clips recorded before the relative chat trigger. */
+    /** Absent on clips recorded before the relative chat trigger. Since the spike-then-composition
+     *  rule: the share of trigger messages in the window; before it: the share of active authors. */
     triggerShare?: number;
     triggerMessages?: number;
+    /** Messages in the window; absent on clips recorded before the spike-then-composition rule. */
+    messages?: number;
+    /** Present only on clips of the older rule (triggerShare is then a share of active authors). */
     activeAuthors?: number;
     laughShare: number; reactionShare: number; deltaDb: number };
 }

@@ -16,7 +16,7 @@ describe('service config', () => {
   it('ignores unknown detector keys', () => {
     write({ password: 'x', detector: { chat: { someOldKey: 3 }, oldSection: { C: 1 } } });
     const cfg = loadConfig(file, dir);
-    expect(cfg.detector.chat.minTriggerShare).toBe(0.05);
+    expect(cfg.detector.chat.minTriggerShare).toBe(0.5);
     expect((cfg.detector.chat as unknown as Record<string, unknown>).someOldKey).toBeUndefined();
   });
 
@@ -29,7 +29,7 @@ describe('service config', () => {
   });
 
   it('has the new score defaults', () => {
-    expect(defaultConfig('D:/d').detector.score).toEqual({ shareFull: 0.3, spikeFull: 6, audioMinDb: 10, audioFullDb: 20 });
+    expect(defaultConfig('D:/d').detector.score).toEqual({ shareFull: 0.9, spikeFull: 6, audioMinDb: 10, audioFullDb: 20 });
   });
 
   it('defaults match the spec', () => {
@@ -58,12 +58,20 @@ describe('service config', () => {
     expect(res.some((re) => re.test('ах'))).toBe(false);
   });
 
+  it('ignores share thresholds written for the old rule (a file without minSpike)', () => {
+    write({ password: 'x', detector: { chat: { minTriggerShare: 0.05, minTriggerMessages: 4 }, score: { shareFull: 0.3 } } });
+    const c = loadConfig(file, 'D:/d');
+    expect([c.detector.chat.minTriggerShare, c.detector.score.shareFull, c.detector.chat.minSpike]).toEqual([0.5, 0.9, 2]);
+    expect(c.detector.chat.minTriggerMessages).toBe(4);
+  });
+
   it('merges file over defaults', () => {
-    write({ password: 'x', preRollMs: 20000, detector: { chat: { minTriggerShare: 0.1 } } });
+    write({ password: 'x', preRollMs: 20000, detector: { chat: { minSpike: 3, minTriggerShare: 0.6 } } });
     const c = loadConfig(file, 'D:/d');
     expect(c.preRollMs).toBe(20000);
     expect(c.postRollMs).toBe(10000);
-    expect(c.detector.chat.minTriggerShare).toBe(0.1);
+    expect(c.detector.chat.minTriggerShare).toBe(0.6);
+    expect(c.detector.chat.minSpike).toBe(3);
     expect(c.detector.chat.minTriggerMessages).toBe(3);
     expect(c.detector.audio.triggerDb).toBe(15);
   });

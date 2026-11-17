@@ -242,12 +242,12 @@ it('shutdown flushes a pending clip before exit', async () => {
 
 it('creates the default profile from config.json on the first start and keeps edits across restarts', async () => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
-  writeConfig({ preRollMs: 7000, detector: { chat: { minTriggerShare: 0.1 } } });
+  writeConfig({ preRollMs: 7000, detector: { chat: { minSpike: 2, minTriggerShare: 0.6 } } });
   let base = await start();
   let cookie = await login(base);
   const list = async () => (await (await get(base, cookie, '/api/profiles')).json()) as Array<{ id: string; isDefault: boolean; settings: any }>;
   const [first] = await list();
-  expect(first).toMatchObject({ isDefault: true, settings: { cut: { preRollMs: 7000 }, detector: { chat: { minTriggerShare: 0.1 } } } });
+  expect(first).toMatchObject({ isDefault: true, settings: { cut: { preRollMs: 7000 }, detector: { chat: { minTriggerShare: 0.6 } } } });
 
   const settings = structuredClone(first!.settings);
   settings.cut.preRollMs = 3000;
@@ -260,9 +260,9 @@ it('creates the default profile from config.json on the first start and keeps ed
 
   await service!.shutdown();
   service = null;
-  writeConfig({ preRollMs: 9000, detector: { chat: { minTriggerShare: 0.2 } } });
+  writeConfig({ preRollMs: 9000, detector: { chat: { minSpike: 2, minTriggerShare: 0.7 } } });
   base = await start();
   cookie = await login(base);
   const [again] = await list();
-  expect(again).toMatchObject({ id: first!.id, settings: { cut: { preRollMs: 3000 }, detector: { chat: { minTriggerShare: 0.1 } } } });
+  expect(again).toMatchObject({ id: first!.id, settings: { cut: { preRollMs: 3000 }, detector: { chat: { minTriggerShare: 0.6 } } } });
 });

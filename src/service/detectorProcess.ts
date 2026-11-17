@@ -10,9 +10,9 @@ export interface DetectorDetail {
   sinceStartMs: number;
   chat: {
     messages: number; authors: number; baseline: number; spike: number; triggerMessages: number; triggerAuthors: number;
-    laughMessages: number; reactionMessages: number; activeAuthors: number; activeAuthorsRaw: number; triggerShare: number;
+    laughMessages: number; reactionMessages: number; triggerShare: number;
   };
-  conditions: { warm: boolean; messages: boolean; authors: boolean; share: boolean; fired: boolean };
+  conditions: { warm: boolean; spike: boolean; messages: boolean; authors: boolean; share: boolean; fired: boolean };
   audio: { db: number; baselineDb: number; deltaDb: number; vad: number; warm: boolean; spiking: boolean };
   score: { total: number; share: number; speed: number; audio: number };
   event: {
@@ -36,6 +36,7 @@ export interface DetectorSignals {
   chatSpike: number;
   triggerShare?: number;
   triggerMessages?: number;
+  /** Only in frames of a detector older than the spike-then-composition rule. */
   activeAuthors?: number;
   laughShare: number;
   messages: number;

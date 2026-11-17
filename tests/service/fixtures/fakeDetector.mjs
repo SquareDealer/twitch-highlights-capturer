@@ -32,7 +32,7 @@ if (!has('--no-heartbeat')) {
 }
 if (opt('--chat')) out({ type: 'status', chat: opt('--chat') });
 process.stdout.write('this is not json\n');
-const DETAIL = { configVersion: 0, sinceStartMs: 1, chat: { messages: 1, authors: 1, baseline: 0.5, spike: 2, triggerMessages: 1, triggerAuthors: 1, laughMessages: 1, reactionMessages: 0, activeAuthors: 1, activeAuthorsRaw: 1, triggerShare: 1 }, conditions: { warm: true, messages: true, authors: true, share: true, fired: false }, audio: { db: -30, baselineDb: -40, deltaDb: 10, vad: 0.5, warm: true, spiking: false }, score: { total: 1, share: 0, speed: 0, audio: 0 }, event: null };
+const DETAIL = { configVersion: 0, sinceStartMs: 1, chat: { messages: 1, authors: 1, baseline: 0.5, spike: 2, triggerMessages: 1, triggerAuthors: 1, laughMessages: 1, reactionMessages: 0, triggerShare: 1 }, conditions: { warm: true, spike: true, messages: true, authors: true, share: true, fired: false }, audio: { db: -30, baselineDb: -40, deltaDb: 10, vad: 0.5, warm: true, spiking: false }, score: { total: 1, share: 0, speed: 0, audio: 0 }, event: null };
 if (has('--signals-detail')) out({ type: 'signals', tMs: 0, chatSpike: 0, laughShare: 0, messages: 0, deltaDb: 0, vad: 0, warm: false, detail: DETAIL });
 
 let buf = Buffer.alloc(0);

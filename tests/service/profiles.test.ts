@@ -157,3 +157,26 @@ it('logs the seeding once', () => {
   expect(log).toHaveBeenCalledTimes(1);
   expect(log.mock.calls[0]![0]).toContain('Создан профиль «По умолчанию» из config.json');
 });
+
+describe('profiles stored before the spike-then-composition rule', () => {
+  const oldShape = (): any => {
+    const o: any = JSON.parse(JSON.stringify(SEED));
+    delete o.detector.chat.minSpike;
+    Object.assign(o.detector.chat, { minTriggerShare: 0.05, minActive: 10, activeWindowS: 300 });
+    o.detector.score.shareFull = 0.3;
+    o.cut.preRollMs = 7000;
+    return o;
+  };
+  it('are migrated when the service starts', () => {
+    db.prepare("UPDATE profiles SET settings = ?").run(JSON.stringify(oldShape()));
+    const st = make().defaultProfile().settings;
+    expect(st.detector.chat).toMatchObject({ minSpike: 2, minTriggerShare: 0.5 });
+    expect(st.detector.score.shareFull).toBe(0.9);
+    expect(st.cut.preRollMs).toBe(7000);
+    expect('minActive' in st.detector.chat).toBe(false);
+  });
+  it('are migrated when they come from the seed', () => {
+    db.prepare('DELETE FROM profiles').run();
+    expect(make(oldShape).defaultProfile().settings.detector.chat).toMatchObject({ minSpike: 2, minTriggerShare: 0.5 });
+  });
+});

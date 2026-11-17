@@ -3,7 +3,7 @@ import path from 'node:path';
 
 export interface DetectorConfig {
   chat: {
-    windowS: number; baselineS: number; alpha: number; activeWindowS: number; minActive: number;
+    windowS: number; baselineS: number; alpha: number; minSpike: number;
     minTriggerMessages: number; minTriggerAuthors: number; minTriggerShare: number; endSpike: number; repeatShare: number;
     laughWords: string[]; reactionWords: string[]; interactiveWords: string[];
   };
@@ -65,8 +65,8 @@ export function defaultConfig(dataDir: string): ServiceConfig {
     offlineEndMs: 300000,
     detector: {
       chat: {
-        windowS: 5, baselineS: 300, alpha: 1, activeWindowS: 300, minActive: 10,
-        minTriggerMessages: 3, minTriggerAuthors: 2, minTriggerShare: 0.05, endSpike: 1.5, repeatShare: 0.6,
+        windowS: 5, baselineS: 300, alpha: 1, minSpike: 2,
+        minTriggerMessages: 3, minTriggerAuthors: 2, minTriggerShare: 0.5, endSpike: 1.5, repeatShare: 0.6,
         laughWords: [
           '^[ах]*ха[ах]*$', '^[ah]*ha[ah]*$', '^ору+$', '^ржу+$', '^ло+л$', '^ке+к$', '^пхп+$', '^хд+$',
           '^lo+l$', '^lmao+$', '^xd+$', '^kekw$', '^lul$', '^omegalul$', '^icant$', '😂', '🤣',
@@ -81,7 +81,7 @@ export function defaultConfig(dataDir: string): ServiceConfig {
         triggerDb: 15, triggerVad: 0.7, triggerMinMs: 500,
       },
       events: { warmupS: 60, lookbackS: 20, chatLagS: 8, voiceWindowS: 20, mergeGapS: 10, maxEventS: 60 },
-      score: { shareFull: 0.3, spikeFull: 6, audioMinDb: 10, audioFullDb: 20 },
+      score: { shareFull: 0.9, spikeFull: 6, audioMinDb: 10, audioFullDb: 20 },
     },
   };
 }
@@ -121,6 +121,14 @@ export function loadConfig(file: string, dataDir: string): ServiceConfig {
   const finalDataDir = typeof raw.dataDir === 'string' && raw.dataDir ? raw.dataDir : dataDir;
   const cfg = merge(defaultConfig(finalDataDir) as unknown as Obj, raw, '') as unknown as ServiceConfig;
   if (!cfg.password) throw new Error('Не задано поле password: пароль обязателен');
+  // A file without detector.chat.minSpike predates the spike-then-composition rule: its share thresholds
+  // measured the share of active authors, a different quantity, so they are not carried over.
+  const rawChat = isObj(raw.detector) && isObj(raw.detector.chat) ? raw.detector.chat : null;
+  if (!rawChat || rawChat.minSpike === undefined) {
+    const def = defaultConfig(finalDataDir).detector;
+    cfg.detector.chat.minTriggerShare = def.chat.minTriggerShare;
+    cfg.detector.score.shareFull = def.score.shareFull;
+  }
   for (const field of ['laughWords', 'reactionWords', 'interactiveWords'] as const) {
     for (const w of cfg.detector.chat[field]) {
       try { new RegExp(w, 'i'); } catch { throw new Error(`Неверное регулярное выражение в поле detector.chat.${field}: ${w}`); }

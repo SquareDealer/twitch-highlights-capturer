@@ -27,11 +27,10 @@
       "alpha": 1,
       "repeatShare": 0.6,
       "endSpike": 1.5,
-      "activeWindowS": 300,
-      "minActive": 10,
+      "minSpike": 2,
       "minTriggerMessages": 3,
       "minTriggerAuthors": 2,
-      "minTriggerShare": 0.05,
+      "minTriggerShare": 0.5,
       "laughWords": [
         "^[ах]*ха[ах]*$",
         "^[ah]*ha[ah]*$",
@@ -92,7 +91,7 @@
       "maxEventS": 60
     },
     "score": {
-      "shareFull": 0.3,
+      "shareFull": 0.9,
       "spikeFull": 6,
       "audioMinDb": 10,
       "audioFullDb": 20

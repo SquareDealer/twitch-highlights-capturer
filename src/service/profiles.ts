@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../main/db';
-import { validateSettings, type ProfileSettings } from './profileSettings';
+import { migrateSettings, validateSettings, type ProfileSettings } from './profileSettings';
 
 export interface Profile {
   id: string; name: string; isDefault: boolean; settings: ProfileSettings; createdAt: string; updatedAt: string;
@@ -33,7 +33,8 @@ export class ProfileService extends EventEmitter {
   private readonly now: () => Date;
   private readonly newId: () => string;
 
-  /** seed() is called once, only when the table is empty; its result is stored without validation. */
+  /** seed() is called once, only when the table is empty; its result is brought to the current shape
+   *  but not validated. Profiles stored before the spike-then-composition rule are migrated here. */
   constructor(private readonly db: Db, seed: () => ProfileSettings, opts: { now?: () => Date; newId?: () => string } = {}) {
     super();
     this.now = opts.now ?? (() => new Date());
@@ -42,11 +43,18 @@ export class ProfileService extends EventEmitter {
     if (n === 0) {
       const at = this.now().toISOString();
       db.prepare('INSERT INTO profiles (id, name, settings, is_default, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)')
-        .run(this.newId(), DEFAULT_PROFILE_NAME, JSON.stringify(seed()), at, at);
+        .run(this.newId(), DEFAULT_PROFILE_NAME, JSON.stringify(migrateSettings(seed())), at, at);
       console.log(
         'Создан профиль «По умолчанию» из config.json. Дальше пороги и параметры нарезки правятся в веб-интерфейсе ' +
           '(вкладка «Профили»); эти ключи в config.json больше не читаются.',
       );
+    }
+    const rows = db.prepare('SELECT id, settings FROM profiles').all() as Array<{ id: string; settings: string }>;
+    for (const r of rows) {
+      let stored: unknown = null;
+      try { stored = JSON.parse(r.settings); } catch { /* unreadable: replaced by the factory settings below */ }
+      const migrated = JSON.stringify(migrateSettings(stored));
+      if (migrated !== JSON.stringify(stored)) db.prepare('UPDATE profiles SET settings = ? WHERE id = ?').run(migrated, r.id);
     }
   }
 
