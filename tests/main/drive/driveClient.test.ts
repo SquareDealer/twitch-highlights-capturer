@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { OAuth2Client } from 'google-auth-library';
 import { join } from 'node:path';
-import { createDriveClient, type DriveRequest } from '../../../src/main/drive/driveClient';
+import { createDriveClient, folderIdFromLink, type DriveRequest } from '../../../src/main/drive/driveClient';
 import { tmpDir } from '../../helpers';
 
 type Call = { method: string; url: string; params?: Record<string, string>; data?: unknown; headers?: Record<string, string> };
@@ -126,4 +126,56 @@ test('uploadFile: файл с таким именем уже лежит в па�
   expect(calls.map((c) => c.method)).toEqual(['GET', 'PATCH', 'PUT']);
   expect(calls[0]!.params!.q).toBe("name = 'it\\'s.mp4' and 'p1' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false");
   expect(calls[1]!.url).toBe('https://www.googleapis.com/upload/drive/v3/files/orphan1');
+});
+
+describe('поиск существующей папки', () => {
+  const FOLDER = 'application/vnd.google-apps.folder';
+  const tree: Record<string, { name: string; mimeType: string; parents?: string[]; capabilities?: { canAddChildren: boolean } }> = {
+    root0: { name: 'My Drive', mimeType: FOLDER },
+    work: { name: 'Работа', mimeType: FOLDER, parents: ['root0'] },
+    sort: { name: 'to_sort', mimeType: FOLDER, parents: ['work'], capabilities: { canAddChildren: true } },
+    ro: { name: 'чужая', mimeType: FOLDER, parents: ['hidden'], capabilities: { canAddChildren: false } },
+    shared: { name: 'общая', mimeType: FOLDER, capabilities: { canAddChildren: true } },
+    video: { name: 'a.mp4', mimeType: 'video/mp4', parents: ['root0'] },
+  };
+  const byId = (c: Call) => {
+    const id = decodeURIComponent(c.url.split('/files/')[1] ?? '');
+    const f = tree[id];
+    if (!f) throw Object.assign(new Error('not found'), { status: 404 });
+    return { data: { id, ...f } };
+  };
+
+  test('getFolder возвращает имя, путь от корня и право записи', async () => {
+    respond = byId;
+    expect(await createDriveClient(request).getFolder('sort')).toEqual({ id: 'sort', name: 'to_sort', path: 'Мой диск / Работа / to_sort', canAddChildren: true });
+    expect(calls[0]!.params).toMatchObject({ supportsAllDrives: 'true' });
+  });
+  test('getFolder: не папка и несуществующий ID → null; другая ошибка пробрасывается', async () => {
+    respond = byId;
+    expect(await createDriveClient(request).getFolder('video')).toBeNull();
+    expect(await createDriveClient(request).getFolder('nope')).toBeNull();
+    respond = () => { throw Object.assign(new Error('boom'), { status: 500 }); };
+    await expect(createDriveClient(request).getFolder('sort')).rejects.toThrow('boom');
+  });
+  test('путь обрывается многоточием на недоступном родителе, а папка без родителей — только имя', async () => {
+    respond = byId;
+    const c = createDriveClient(request);
+    expect(await c.getFolder('ro')).toMatchObject({ path: '… / чужая', canAddChildren: false });
+    expect(await c.getFolder('shared')).toMatchObject({ path: 'общая' });
+  });
+  test('findFolders ищет по имени среди папок не в корзине и экранирует кавычку', async () => {
+    respond = (c) => (c.url.endsWith('/files') ? { data: { files: [{ id: 'sort', name: 'to_sort', parents: ['work'] }, { id: 'shared', name: 'to_sort' }] } } : byId(c));
+    const found = await createDriveClient(request).findFolders("to'sort");
+    expect(calls[0]!.params!.q).toBe("name = 'to\\'sort' and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+    expect(calls[0]!.params).toMatchObject({ supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', pageSize: '20' });
+    expect(found).toEqual([{ id: 'sort', name: 'to_sort', path: 'Мой диск / Работа / to_sort' }, { id: 'shared', name: 'to_sort', path: 'to_sort' }]);
+  });
+  test.each([
+    ['1AbCdEfGhIjKlMnOpQrStUv', '1AbCdEfGhIjKlMnOpQrStUv'],
+    ['https://drive.google.com/drive/folders/1AbC_dEf-GhIjKl?usp=sharing', '1AbC_dEf-GhIjKl'],
+    ['https://drive.google.com/drive/u/0/folders/1AbC_dEf-GhIjKl', '1AbC_dEf-GhIjKl'],
+    [' https://drive.google.com/open?id=1AbC_dEf-GhIjKl&x=1 ', '1AbC_dEf-GhIjKl'],
+  ])('folderIdFromLink(%s)', (text, id) => expect(folderIdFromLink(text)).toBe(id));
+  test.each(['https://example.com/x', '', 'to_sort', 'https://drive.google.com/file/d/1AbC_dEf-GhIjKl/view', "1AbC' or '1'='1"])(
+    'folderIdFromLink(%s) → null', (text) => expect(folderIdFromLink(text)).toBeNull());
 });
