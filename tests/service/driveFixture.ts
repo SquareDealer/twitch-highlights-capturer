@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { Db } from '../../src/main/db';
-import type { OAuthLike } from '../../src/main/drive/auth';
+import type { OAuthLike } from '../../src/main/drive/driveClient';
 import type { DriveClient, DriveFolderLookup } from '../../src/main/drive/driveClient';
 import type { createClipRepo } from '../../src/service/clipRepo';
 import { ServiceDriveAuth } from '../../src/service/driveAuth';

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openDb } from '../../src/main/db';
-import type { OAuthLike } from '../../src/main/drive/auth';
+import type { OAuthLike } from '../../src/main/drive/driveClient';
 import { DRIVE_CALLBACK_PATH, redirectProblem, ServiceDriveAuth } from '../../src/service/driveAuth';
 import { createDriveSettings } from '../../src/service/driveSettings';
 import { tmpDir } from '../helpers';

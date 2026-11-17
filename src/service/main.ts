@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { OAuth2Client } from 'google-auth-library';
 import { openDb } from '../main/db';
-import type { OAuthLike } from '../main/drive/auth';
+import type { OAuthLike } from '../main/drive/driveClient';
 import { createDriveClient } from '../main/drive/driveClient';
 import { createClipRepo } from './clipRepo';
 import { bufferDirProblem, defaultConfig, loadConfig, type ServiceConfig } from './config';

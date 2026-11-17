@@ -1,4 +1,4 @@
-# The web service (not the Electron app): Node service + Python detector + streamlink + ffmpeg.
+# Node service + Python detector + streamlink + ffmpeg.
 # Node 24: the version the project is developed and tested on.
 FROM node:24-bookworm-slim
 
@@ -16,12 +16,11 @@ RUN python3 -m venv /opt/venv \
 
 WORKDIR /app
 
-# Dependencies first: this layer is rebuilt only when the lockfile changes. Electron is a dev
-# dependency of the desktop app; its binary is not needed here.
+# Dependencies first: this layer is rebuilt only when the lockfile changes.
 # `npm install`, not `npm ci`: the lockfile is written on Windows and lacks two optional Linux-only
 # packages, which `npm ci` refuses; `install` keeps every locked version and adds just those.
 COPY package.json package-lock.json ./
-RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install --no-audit --no-fund
+RUN npm install --no-audit --no-fund
 
 # The Silero VAD model (v5) is not in the repository.
 ARG SILERO_VAD_URL=https://github.com/snakers4/silero-vad/raw/v5.1.2/src/silero_vad/data/silero_vad.onnx

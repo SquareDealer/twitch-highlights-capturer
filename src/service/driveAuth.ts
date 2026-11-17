@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import type { Result } from '@shared/types';
-import type { OAuthLike } from '../main/drive/auth';
+import type { OAuthLike } from '../main/drive/driveClient';
 import type { DriveSettingsStore } from './driveSettings';
 
 type Tokens = Record<string, unknown>;

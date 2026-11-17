@@ -1,19 +1,16 @@
 {
-  "name": "twitch-highlight-recorder",
-  "version": "0.1.0",
-  "description": "Twitch Highlight Recorder",
-  "main": "./out/main/index.js",
+  "name": "twitch-highlights-realtime",
+  "version": "1.0.0",
+  "description": "Хайлайты Twitch: сервис, который сам находит моменты в эфирах и нарезает клипы",
   "private": true,
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win nsis",
+    "start": "tsx src/service/main.ts",
+    "service": "tsx src/service/main.ts",
+    "service:build": "npm run web:build",
     "web:build": "vite build --config vite.web.config.ts",
     "web:dev": "vite --config vite.web.config.ts",
-    "service": "tsx src/service/main.ts",
-    "service:build": "npm run web:build"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",
@@ -28,10 +25,6 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
-    "cross-env": "^10.1.0",
-    "electron": "^45.3.2",
-    "electron-builder": "^26.18.0",
-    "electron-vite": "^6.0.0",
     "jsdom": "^31.0.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

@@ -194,3 +194,13 @@ export function createDriveClient(request: DriveRequest): DriveClient & DriveFol
     },
   };
 }
+
+/** The part of google-auth-library's OAuth2Client that is used here (lets tests substitute it). */
+export interface OAuthLike {
+  generateAuthUrl(opts: Record<string, unknown>): string;
+  getToken(opts: { code: string; codeVerifier?: string; redirect_uri?: string }): Promise<{ tokens: Record<string, unknown> }>;
+  setCredentials(tokens: Record<string, unknown>): void;
+  on(event: 'tokens', cb: (tokens: Record<string, unknown>) => void): unknown;
+  revokeToken(token: string): Promise<unknown>;
+  request: DriveRequest;
+}
