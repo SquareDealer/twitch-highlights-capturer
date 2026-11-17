@@ -10,6 +10,7 @@ import { settingsFromConfig } from '../../src/service/profileSettings';
 import { ProfileService, type Profile } from '../../src/service/profiles';
 import type { FeedClip } from '../../src/service/types';
 import { tmpDir } from '../helpers';
+import { driveFixture } from './driveFixture';
 
 const PASSWORD = 'pw';
 const FILE = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
@@ -47,6 +48,7 @@ let paused = { paused: false, reason: null as string | null };
 let base: string;
 let profiles: ProfileService;
 let def: Profile;
+let drive: ReturnType<typeof driveFixture>['deps'];
 
 beforeEach(async () => {
   root = tmpDir();
@@ -66,8 +68,9 @@ beforeEach(async () => {
   clips.insert(clip('c-error', { status: 'error', error: 'x', createdAt: '2026-11-15T08:00:00.000Z' }));
   clips.insert(clip('c-gone', { fileDeleted: true, mp4Path: join(root, 'a.mp4'), createdAt: '2026-11-15T07:00:00.000Z' }));
   paused = { paused: false, reason: null };
+  drive = driveFixture(db, clips, root).deps;
   http = await startHttp(
-    { registry: registry as any, profiles, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir, cuttingPaused: () => paused },
+    { registry: registry as any, profiles, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir, cuttingPaused: () => paused, drive },
     0,
     '127.0.0.1',
   );
@@ -454,7 +457,7 @@ it('closes SSE streams whose token is no longer valid at the ping', async () => 
   vi.useFakeTimers({ toFake: ['setInterval', 'Date'] });
   try {
     const local = await startHttp(
-      { registry: registry as any, profiles, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir: join(root, 'web'), cuttingPaused: () => paused },
+      { registry: registry as any, profiles, clips, config: () => ({ ...defaultConfig(root), password: PASSWORD }), webDir: join(root, 'web'), cuttingPaused: () => paused, drive },
       0,
       '127.0.0.1',
     );

@@ -2,16 +2,43 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { stat } from 'node:fs/promises';
+import { folderIdFromLink, httpStatus, type DriveClient, type DriveFolderLookup } from '../main/drive/driveClient';
 import { end, MIME, sendFile } from '../main/server';
 import { Sessions } from './auth';
 import type { createClipRepo } from './clipRepo';
 import type { ServiceConfig } from './config';
+import { DRIVE_CALLBACK_PATH, redirectProblem, type ServiceDriveAuth } from './driveAuth';
+import type { DriveFolder, DriveSettingsStore } from './driveSettings';
+import { NOT_CONNECTED, type DriveSync, type DriveSyncState } from './driveSync';
 import { factorySettings } from './profileSettings';
 import type { Profile, ProfileService } from './profiles';
 import type { StreamRegistry } from './streams';
 import type { ClipStatus, FeedClip } from './types';
 
+export interface DriveDeps {
+  settings: DriveSettingsStore;
+  auth: ServiceDriveAuth;
+  sync: DriveSync;
+  /** null while Google Drive is not connected. */
+  client(): Promise<(DriveClient & DriveFolderLookup) | null>;
+}
+
+/** What the «Диск» tab shows. Never carries the client secret or a token. */
+export interface DriveStatus {
+  hasCredentials: boolean;
+  clientId: string;
+  connected: boolean;
+  email: string | null;
+  folder: DriveFolder | null;
+  /** The address to register in the Google console, built from the address this request came to. */
+  redirectUri: string;
+  /** Why Google would refuse that address, or null. */
+  redirectProblem: string | null;
+  sync: DriveSyncState;
+}
+
 export interface HttpDeps {
+  drive: DriveDeps;
   registry: StreamRegistry;
   profiles: ProfileService;
   clips: ReturnType<typeof createClipRepo>;
@@ -28,6 +55,8 @@ const LOGIN_MAX_FAILURES = 5;
 const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self'; object-src 'none'; base-uri 'none'";
 const NOT_A_CHANNEL = 'Это не ссылка на канал Twitch';
 const BAD_REQUEST = 'Некорректный запрос';
+const DRIVE_AUTH_LOST = 'Доступ к Google Drive отозван. Подключите аккаунт заново';
+const MAX_KEY_LENGTH = 300;
 const CHANGEABLE: ClipStatus[] = ['new', 'taken', 'rejected'];
 const ALL_STATUSES: ClipStatus[] = ['pending', 'new', 'taken', 'rejected', 'error'];
 
@@ -114,7 +143,7 @@ function sameOrigin(origin: string, host: string | undefined): boolean {
 /** Routes whose handlers read a JSON body. */
 const readsBody = (method: string, path: string) =>
   (method === 'POST' && /^\/api\/(login|probe|streams|profiles)$/.test(path)) ||
-  (method === 'PUT' && (path === '/api/mode' || /^\/api\/profiles\/[^/]+$/.test(path) || /^\/api\/streams\/[^/]+\/profile$/.test(path))) ||
+  (method === 'PUT' && (path === '/api/mode' || path === '/api/drive/credentials' || path === '/api/drive/folder' || /^\/api\/profiles\/[^/]+$/.test(path) || /^\/api\/streams\/[^/]+\/profile$/.test(path))) ||
   (method === 'POST' && /^\/api\/clips\/[^/]+\/status$/.test(path));
 
 export async function startHttp(
@@ -148,6 +177,55 @@ export async function startHttp(
   deps.registry.on('notice', onNotice);
   deps.registry.on('tuning', onTuning);
   deps.profiles.on('list', onProfiles);
+
+  /** scheme://host the request came to: what the browser has in its address bar. */
+  const requestOrigin = (req: IncomingMessage): string => {
+    const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() === 'https' ? 'https' : 'http';
+    return `${proto}://${req.headers.host ?? 'localhost'}`;
+  };
+  const driveState = async (): Promise<Omit<DriveStatus, 'redirectUri' | 'redirectProblem'>> => {
+    const { clientId, clientSecret, folder } = deps.drive.settings.get();
+    const account = await deps.drive.auth.status();
+    return {
+      hasCredentials: clientId !== '' && clientSecret !== '', clientId, connected: account.connected,
+      email: account.email ?? null, folder, sync: deps.drive.sync.state(),
+    };
+  };
+  const driveStatus = async (req: IncomingMessage): Promise<DriveStatus> => {
+    const origin = requestOrigin(req);
+    return { ...(await driveState()), redirectUri: `${origin}${DRIVE_CALLBACK_PATH}`, redirectProblem: redirectProblem(origin) };
+  };
+  const pushDrive = (): void => {
+    void driveState().then((st) => broadcast('drive', st), () => undefined);
+  };
+  deps.drive.sync.on('state', pushDrive);
+  deps.drive.sync.on('clip', onClip);
+  /** A Drive call made for a route: a revoked grant signs out and becomes a 409, other failures a 502. */
+  const driveCall = async <T,>(res: ServerResponse, fn: () => Promise<T>): Promise<{ value: T } | null> => {
+    try {
+      return { value: await fn() };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (httpStatus(e) === 401 || /invalid_grant/i.test(message)) {
+        await deps.drive.auth.invalidate();
+        pushDrive();
+        fail(res, 409, DRIVE_AUTH_LOST);
+      } else {
+        fail(res, 502, `Google Drive не ответил: ${message}`);
+      }
+      return null;
+    }
+  };
+  const htmlPage = (res: ServerResponse, status: number, text: string): void => {
+    const safe = text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    const body = Buffer.from(
+      `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Google Drive</title>` +
+        `<body style="font:16px system-ui,sans-serif;background:#0e0f13;color:#e7e8ec;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center">` +
+        `<div><p>${safe}</p><p><a href="/#drive" style="color:#8b7cf6">Вернуться</a></p></div></body></html>`,
+    );
+    res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': String(body.length), 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP });
+    res.end(body);
+  };
   const closeStream = (res: ServerResponse): void => {
     sse.delete(res);
     res.end();
@@ -184,6 +262,16 @@ export async function startHttp(
         return fail(res, 401, 'Неверный пароль');
       }
       return end(res, 204, { 'Set-Cookie': `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 24 * 3600}` });
+    }
+
+    // Google redirects here from another site, so the SameSite=Strict session cookie does not come along:
+    // the one-time state issued by /api/drive/connect is what this route trusts.
+    if (method === 'GET' && path === DRIVE_CALLBACK_PATH) {
+      const q = url.searchParams;
+      const r = await deps.drive.auth.finish(q.get('state'), q.get('code'), q.get('error'));
+      pushDrive();
+      if (!r.ok) return htmlPage(res, 400, r.error);
+      return end(res, 302, { Location: '/#drive', 'Cache-Control': 'no-store' });
     }
 
     const token = cookieToken(req);
@@ -312,6 +400,68 @@ export async function startHttp(
       return json(res, 200, publicClip(updated));
     }
 
+    if (method === 'GET' && path === '/api/drive') return json(res, 200, await driveStatus(req));
+
+    if (method === 'PUT' && path === '/api/drive/credentials') {
+      const body = await readJson(req);
+      const stored = deps.drive.settings.get();
+      const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+      let clientSecret = typeof body.clientSecret === 'string' ? body.clientSecret.trim() : null;
+      // The secret is never sent to the browser, so an empty one means "leave it" — for the same client only.
+      if (clientSecret === '' && clientId === stored.clientId) clientSecret = stored.clientSecret;
+      if (!clientId || !clientSecret || clientId.length > MAX_KEY_LENGTH || clientSecret.length > MAX_KEY_LENGTH) {
+        return fail(res, 400, 'Укажите Client ID и Client Secret');
+      }
+      if (clientId !== stored.clientId || clientSecret !== stored.clientSecret) {
+        deps.drive.settings.setCredentials(clientId, clientSecret);
+        await deps.drive.auth.invalidate(); // a token belongs to the client it was issued to
+      }
+      pushDrive();
+      return json(res, 200, await driveStatus(req));
+    }
+
+    if (method === 'POST' && path === '/api/drive/connect') {
+      const r = deps.drive.auth.begin(requestOrigin(req));
+      return r.ok ? json(res, 200, r.value) : fail(res, 400, r.error);
+    }
+
+    if (method === 'POST' && path === '/api/drive/disconnect') {
+      await deps.drive.auth.disconnect();
+      pushDrive();
+      return end(res, 204);
+    }
+
+    if (method === 'GET' && path === '/api/drive/folders') {
+      const name = (url.searchParams.get('name') ?? '').trim();
+      if (name === '' || name.length > 200) return fail(res, 400, 'Укажите имя папки');
+      const client = await deps.drive.client();
+      if (!client) return fail(res, 409, NOT_CONNECTED);
+      const found = await driveCall(res, () => client.findFolders(name));
+      return found ? json(res, 200, found.value) : undefined;
+    }
+
+    if (method === 'PUT' && path === '/api/drive/folder') {
+      const body = await readJson(req);
+      const given = typeof body.id === 'string' ? body.id : typeof body.link === 'string' ? body.link : '';
+      const id = folderIdFromLink(given);
+      if (!id) return fail(res, 400, 'Это не ссылка на папку Google Drive');
+      const client = await deps.drive.client();
+      if (!client) return fail(res, 409, NOT_CONNECTED);
+      const found = await driveCall(res, () => client.getFolder(id));
+      if (!found) return;
+      if (!found.value) return fail(res, 404, 'Папка не найдена или к ней нет доступа');
+      if (!found.value.canAddChildren) return fail(res, 409, 'В эту папку нельзя добавлять файлы');
+      deps.drive.settings.setFolder({ id: found.value.id, name: found.value.name, path: found.value.path });
+      pushDrive();
+      return json(res, 200, await driveStatus(req));
+    }
+
+    if (method === 'POST' && path === '/api/drive/sync') {
+      if (!(await deps.drive.auth.status()).connected) return fail(res, 409, NOT_CONNECTED);
+      const r = deps.drive.sync.start();
+      return r.ok ? json(res, 202, r.value) : fail(res, 409, r.error);
+    }
+
     return fail(res, 404, 'Не найдено');
   }
 
@@ -397,6 +547,8 @@ export async function startHttp(
         deps.registry.off('notice', onNotice);
         deps.registry.off('tuning', onTuning);
         deps.profiles.off('list', onProfiles);
+        deps.drive.sync.off('state', pushDrive);
+        deps.drive.sync.off('clip', onClip);
         for (const res of sse.keys()) res.end();
         sse.clear();
         server.close(() => done());

@@ -1,9 +1,15 @@
 import { randomInt } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { OAuth2Client } from 'google-auth-library';
 import { openDb } from '../main/db';
+import type { OAuthLike } from '../main/drive/auth';
+import { createDriveClient } from '../main/drive/driveClient';
 import { createClipRepo } from './clipRepo';
 import { bufferDirProblem, defaultConfig, loadConfig, type ServiceConfig } from './config';
+import { ServiceDriveAuth } from './driveAuth';
+import { createDriveSettings } from './driveSettings';
+import { DriveSync } from './driveSync';
 import { publicClip, startHttp } from './http';
 import { Janitor } from './janitor';
 import { settingsFromConfig } from './profileSettings';
@@ -22,6 +28,8 @@ export interface RunServiceOptions {
   port?: number;
   /** Interface to listen on; all interfaces by default. */
   host?: string;
+  /** Google OAuth client factory; the real google-auth-library client by default. */
+  createOAuthClient?: (o: { clientId: string; clientSecret: string; redirectUri?: string }) => OAuthLike;
   /** Built web UI; defaults to out/web of the repository. */
   webDir?: string;
 }
@@ -64,6 +72,20 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
   mkdirSync(cfg.bufferDir, { recursive: true });
 
   const janitor = new Janitor({ clips, config });
+
+  // Google Drive: keys and folder in the database, tokens in a file next to it, uploads only on «Sync».
+  const driveSettings = createDriveSettings(db);
+  const driveAuth = new ServiceDriveAuth({
+    settings: driveSettings,
+    tokenFile: join(cfg.dataDir, 'drive-token.json'),
+    createClient: opts.createOAuthClient ?? ((o) => new OAuth2Client(o) as unknown as OAuthLike),
+  });
+  const driveClient = async () => {
+    const oauth = await driveAuth.client();
+    return oauth ? createDriveClient(oauth.request.bind(oauth)) : null;
+  };
+  const driveSync = new DriveSync({ clips, settings: driveSettings, getClient: driveClient, onAuthLost: () => driveAuth.invalidate() });
+  const drive = { settings: driveSettings, auth: driveAuth, sync: driveSync, client: driveClient };
   const registry = new StreamRegistry({
     ...opts.overrides,
     db,
@@ -76,7 +98,7 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
   let http: Awaited<ReturnType<typeof startHttp>>;
   try {
     http = await startHttp(
-      { registry, profiles, clips, config, webDir: opts.webDir ?? join(__dirname, '..', '..', 'out', 'web'), cuttingPaused: () => janitor.state() },
+      { drive, registry, profiles, clips, config, webDir: opts.webDir ?? join(__dirname, '..', '..', 'out', 'web'), cuttingPaused: () => janitor.state() },
       opts.port ?? cfg.port,
       opts.host,
     );
@@ -99,6 +121,9 @@ export async function runService(opts: RunServiceOptions): Promise<{ port: numbe
       try {
         await registry.shutdown(); // flushes pending clips
       } finally {
+        // The upload in flight finishes (its result is written to the database closed below); the rest wait for the next «Sync».
+        driveSync.stop();
+        await driveSync.idle().catch(() => undefined);
         janitor.stop();
         try {
           await http.close();

@@ -266,3 +266,15 @@ it('creates the default profile from config.json on the first start and keeps ed
   const [again] = await list();
   expect(again).toMatchObject({ id: first!.id, settings: { cut: { preRollMs: 3000 }, detector: { chat: { minTriggerShare: 0.6 } } } });
 });
+
+it('runs and stops with Google Drive never configured, reporting it as not connected', async () => {
+  writeConfig({});
+  const base = await start();
+  const cookie = await login(base);
+  const drive = (await (await get(base, cookie, '/api/drive')).json()) as any;
+  expect(drive).toMatchObject({ hasCredentials: false, connected: false, folder: null, sync: { running: false, pending: 0 } });
+  const sync = await fetch(`${base}/api/drive/sync`, { method: 'POST', headers: { Cookie: cookie } });
+  expect(sync.status).toBe(409);
+  await service!.shutdown();
+  service = null;
+});
