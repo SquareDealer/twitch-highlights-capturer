@@ -110,6 +110,7 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', quit);
   process.on('SIGTERM', quit);
+  process.on('SIGHUP', quit); // the terminal window was closed
   if (process.platform === 'win32') process.on('SIGBREAK', quit);
 }
 

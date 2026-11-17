@@ -16,6 +16,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     open: true,
-    proxy: { '/api': backend, '/media': backend },
+    // `Host` is kept as is: the backend accepts API calls only when `Origin` matches the page's own address.
+    proxy: {
+      '/api': { target: backend, changeOrigin: false },
+      '/media': { target: backend, changeOrigin: false },
+    },
   },
 });
