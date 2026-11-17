@@ -40,7 +40,9 @@ export function ThresholdChart({ label, values, marks, threshold, savedThreshold
   }, [threshold, def]);
 
   const clean = values.map((v) => (Number.isFinite(v) ? v : 0));
-  const top = Math.max(def.sliderMax, threshold, savedThreshold, ...clean) || 1;
+  // One huge value (the burst while the baseline is still empty) must not flatten the rest: the scale grows
+  // with the data only up to twice the slider range; higher points are clipped at the top edge.
+  const top = Math.max(def.sliderMax, threshold, savedThreshold, Math.min(def.sliderMax * 2, ...clean)) || 1;
   const y = (v: number) => H - Math.max(0, Math.min(1, v / top)) * H;
   const step = clean.length > 1 ? W / (clean.length - 1) : 0;
   const x = (i: number) => (clean.length > 1 ? i * step : W / 2);

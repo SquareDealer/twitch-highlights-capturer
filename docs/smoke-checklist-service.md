@@ -158,3 +158,34 @@ second 42 on one laugh message, the event stayed open while the chat speed was a
 of 38 s was cut with score 4.6 (share 0.6 + speed 3), `profileName` «Тест», and the log got the `clip` entry.
 
 Seen and fixed afterwards: the sound line printed «+-48,1 дБ» for a negative difference, and «4 сообщений».
+
+## Spike-then-composition trigger, interactive tuning, Google Drive
+
+Live check, 2026-11-17, branch `feat/realtime-service` after the «Drive tab and Sync button» commit. A separate
+instance on port 8099 with `HL_CONFIG`/`HL_DATA` in a scratch folder; the database was a **copy of the working
+`service.sqlite`** (its clip paths re-pointed away from the real library so the janitor could not touch real files).
+Channels at 160p30: gaules (chat silent the whole time), zackrawrr and jynxzi (active chat). Pages were driven in the browser,
+state was read through the HTTP API.
+
+- [x] 1. Migration on the real database: «По умолчанию» came up with `minSpike` 2, `minTriggerShare` 0.5 (was 0.02),
+  `shareFull` 0.9 (was 0.2); `minActive`/`activeWindowS` gone; the hand-tuned `alpha` 0.5 and the rest untouched.
+- [x] 2. «Настройка»: the chain «Всплеск → Состав → Звук» refreshes every second (zackrawrr: ×1,2, 31,8 % — 7 из 22),
+  the composition step is dimmed while there is no spike, both charts draw with their thresholds.
+- [x] 3. Draft thresholds typed into the chart inputs (×1,5 and 30 %): the saved thresholds stay as dashed lines, the
+  counter shows «(с сохранёнными — 0)», «изменения ещё не применены» and the other streams on the profile are named;
+  nothing reached the detectors (`profileVersion` stayed 1).
+- [x] 4. «Применить к профилю»: all three detectors confirmed version 2 within ~2 s, restarts 0, frames kept counting,
+  the chain's «нужно» values changed.
+- [x] 5. «Профили»: six basic fields with sliders, the dot and «вернуть 10 с» on a changed field, collapsed groups,
+  dictionaries as chips, «Проверить сообщение»: «АХАХАХА» → «смех».
+- [x] 6. «Диск» without keys: redirect address `http://localhost:8099/api/drive/callback`, steps 2–3 closed;
+  the feed shows «Sync: настроить Диск»; old clips keep the «реакция 2 % активных» caption.
+- [ ] 7. **Not seen live:** no second fired on the two active chats in ~3 minutes (peaks were ×2,4 with 11 % composition),
+  so no clip was cut by the new rule in this run. The rule itself is covered by the detector tests.
+- [ ] 8. **For the customer, needs a Google account:** save the keys of a «Web application» OAuth client, sign in,
+  choose the existing `to_sort` (by name and by link), «Sync» two taken clips, press «Sync» again — no duplicates,
+  the cards show «на Диске».
+
+Seen and fixed afterwards: near-misses were written for any speed spike, even with no trigger messages and during
+warm-up (8 entries in 2 minutes) — now only when exactly one condition is missing; the warm-up burst (×39 while the
+baseline is empty) flattened the speed chart so the threshold line sat on the bottom edge — the scale is now capped.

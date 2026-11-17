@@ -212,13 +212,12 @@ class EventAssembler:
             except Exception:
                 log.exception("on_chat_spike failed")
 
-        # near-miss: half of the rule holds. Either the spike is there and something else is missing, or the
-        # composition is there and the speed is close (between endSpike and minSpike); without that lower
-        # bound a steadily laughing chat would write an entry every 10 s forever.
-        composed = cond["messages"] and cond["authors"] and cond["share"]
-        close = composed and not cond["spike"] and frame.spike >= c["endSpike"]
-        if (cond["spike"] or close) and not fired and not (self._cur and self._cur.chat_open):
-            missing = [k for k in ("warm", "spike", "share", "messages", "authors") if not cond[k]]
+        # near-miss: exactly one condition is missing. A speed spike of ordinary chatter is not "almost a
+        # highlight" and would flood the log. When the missing one is the spike, the speed must also be close
+        # (at least endSpike): a steadily laughing chat would otherwise write an entry every 10 s forever.
+        missing = [k for k in ("warm", "spike", "share", "messages", "authors") if not cond[k]]
+        almost = len(missing) == 1 and (missing != ["spike"] or frame.spike >= c["endSpike"])
+        if almost and not (self._cur and self._cur.chat_open):
             if self._nm_ok("chat", now):
                 near.append(NearMiss(now, "chat", missing, {
                     "spike": round(frame.spike, 3), "messages": frame.messages,

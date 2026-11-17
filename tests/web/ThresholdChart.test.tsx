@@ -64,3 +64,8 @@ it('renders an empty chart without NaN', () => {
   cleanup();
   expect(view({ values: [NaN, Infinity], marks: [5] }).container.innerHTML).not.toContain('NaN');
 });
+it('keeps the threshold reachable when one huge value (the warm-up burst) is on the chart', () => {
+  const { container } = view({ values: [1, 39, 1.2, 1.1] });
+  const y = Number(container.querySelector('.threshold')!.getAttribute('y1'));
+  expect(y).toBeLessThan(72 * 0.9); // with the scale topped by ×39 the ×2 line would sit at the very bottom
+});

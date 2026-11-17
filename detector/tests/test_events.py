@@ -307,3 +307,12 @@ def test_empty_window_has_zero_share_and_never_fires():
     asm = EventAssembler(DEFAULTS)
     c = asm.conditions(70_000, tf(70, msgs=0, authors=0, total=0, spike=5.0))
     assert c["share"] is False and c["fired"] is False
+
+
+def test_nearmiss_only_when_a_single_condition_is_missing():
+    # a speed spike of ordinary chatter (one laugh among twenty messages) is not "almost a highlight"
+    out, near, _ = run(span(106, 110, msgs=1, authors=1, total=20, spike=3.0))
+    assert out == [] and near == []
+    # ...and neither is anything during warm-up unless warm-up is the only thing missing
+    _, near, _ = run(span(10, 20, msgs=1, authors=1, total=20, spike=3.0), until=50)
+    assert near == []
