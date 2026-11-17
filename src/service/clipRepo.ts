@@ -1,5 +1,5 @@
 import type { Db } from '../main/db';
-import type { ClipStatus, FeedClip } from './types';
+import type { ClipDrive, ClipStatus, FeedClip } from './types';
 
 type Row = Record<string, unknown>;
 
@@ -26,6 +26,17 @@ const toClip = (r: Row): FeedClip => ({
   statusChangedAt: (r.status_changed_at as string | null) ?? null,
   profileId: (r.profile_id as string | null) ?? null,
   profileName: (r.profile_name as string | null) ?? null,
+  ...(r.drive_status === 'synced' || r.drive_status === 'failed'
+    ? {
+        drive: {
+          fileId: (r.drive_file_id as string | null) ?? null,
+          folderId: (r.drive_folder_id as string | null) ?? '',
+          status: r.drive_status,
+          error: (r.drive_error as string | null) ?? null,
+          syncedAt: (r.drive_synced_at as string | null) ?? null,
+        } satisfies ClipDrive,
+      }
+    : {}),
 });
 
 const PATCH_COLUMNS: Record<string, string> = {
@@ -38,6 +49,9 @@ const PATCH_COLUMNS: Record<string, string> = {
   fileDeleted: 'file_deleted',
   statusChangedAt: 'status_changed_at',
 };
+
+const DRIVE_QUEUE =
+  "status = 'taken' AND file_deleted = 0 AND NOT (COALESCE(drive_status, '') = 'synced' AND COALESCE(drive_folder_id, '') = ?)";
 
 export function createClipRepo(db: Db) {
   return {
@@ -74,8 +88,13 @@ export function createClipRepo(db: Db) {
     },
     update(
       id: string,
-      patch: Partial<Pick<FeedClip, 'status' | 'error' | 'startMs' | 'endMs' | 'durationMs' | 'bytes' | 'fileDeleted' | 'statusChangedAt'>>,
+      patch: Partial<Pick<FeedClip, 'status' | 'error' | 'startMs' | 'endMs' | 'durationMs' | 'bytes' | 'fileDeleted' | 'statusChangedAt' | 'drive'>>,
     ): void {
+      if (patch.drive) {
+        const d = patch.drive;
+        db.prepare('UPDATE feed_clips SET drive_file_id = ?, drive_folder_id = ?, drive_status = ?, drive_error = ?, drive_synced_at = ? WHERE id = ?')
+          .run(d.fileId, d.folderId, d.status, d.error, d.syncedAt, id);
+      }
       const keys = Object.keys(patch).filter((k) => k in PATCH_COLUMNS && (patch as Row)[k] !== undefined);
       if (keys.length === 0) return;
       const values = keys.map((k) => {
@@ -104,6 +123,13 @@ export function createClipRepo(db: Db) {
       } ORDER BY created_at`;
       const rows = (olderThanIso ? db.prepare(sql).all(olderThanIso) : db.prepare(sql).all()) as Row[];
       return rows.map(toClip);
+    },
+    /** Taken clips whose file exists and is not yet on Drive in this folder, oldest first. */
+    driveQueue(folderId: string): FeedClip[] {
+      return (db.prepare(`SELECT * FROM feed_clips WHERE ${DRIVE_QUEUE} ORDER BY created_at, rowid`).all(folderId) as Row[]).map(toClip);
+    },
+    driveQueueCount(folderId: string): number {
+      return (db.prepare(`SELECT COUNT(*) AS n FROM feed_clips WHERE ${DRIVE_QUEUE}`).get(folderId) as { n: number }).n;
     },
     failPending(error: string): number {
       return db

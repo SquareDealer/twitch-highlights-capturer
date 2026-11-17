@@ -65,6 +65,13 @@ const MIGRATIONS: string[] = [
   ALTER TABLE feed_clips ADD COLUMN profile_id TEXT;
   ALTER TABLE feed_clips ADD COLUMN profile_name TEXT;
   `,
+  `
+  ALTER TABLE feed_clips ADD COLUMN drive_file_id TEXT;
+  ALTER TABLE feed_clips ADD COLUMN drive_folder_id TEXT;
+  ALTER TABLE feed_clips ADD COLUMN drive_status TEXT;
+  ALTER TABLE feed_clips ADD COLUMN drive_error TEXT;
+  ALTER TABLE feed_clips ADD COLUMN drive_synced_at TEXT;
+  `,
 ];
 
 /** Opens (and migrates) the application database. Use ':memory:' in tests. */

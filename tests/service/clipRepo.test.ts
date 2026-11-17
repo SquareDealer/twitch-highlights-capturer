@@ -79,3 +79,45 @@ it('stores and reads the profile of a clip', () => {
   expect(repo.get('with')).toMatchObject({ profileId: 'p1', profileName: 'А' });
   expect(repo.get('without')).toMatchObject({ profileId: null, profileName: null });
 });
+
+describe('Google Drive state of a clip', () => {
+  const synced = (folderId: string) => ({ fileId: 'f1', folderId, status: 'synced' as const, error: null, syncedAt: '2026-11-17T10:00:00.000Z' });
+  test('is absent until an upload is tried, then round-trips', () => {
+    repo.insert(clip('a', { status: 'taken' }));
+    expect('drive' in repo.get('a')!).toBe(false);
+    repo.update('a', { drive: synced('F') });
+    expect(repo.get('a')!.drive).toEqual(synced('F'));
+    repo.update('a', { drive: { fileId: null, folderId: 'F', status: 'failed', error: 'нет сети', syncedAt: null } });
+    expect(repo.get('a')!.drive).toEqual({ fileId: null, folderId: 'F', status: 'failed', error: 'нет сети', syncedAt: null });
+  });
+  test('the queue holds taken clips with a file that are not synced to this folder, oldest first', () => {
+    repo.insert(clip('new', { status: 'new' }));
+    repo.insert(clip('gone', { status: 'taken', fileDeleted: true }));
+    repo.insert(clip('t2', { status: 'taken', createdAt: '2026-11-15T12:00:00.000Z' }));
+    repo.insert(clip('t1', { status: 'taken', createdAt: '2026-11-15T11:00:00.000Z' }));
+    repo.insert(clip('done', { status: 'taken' }));
+    repo.update('done', { drive: synced('F') });
+    repo.insert(clip('failed', { status: 'taken', createdAt: '2026-11-15T13:00:00.000Z' }));
+    repo.update('failed', { drive: { fileId: null, folderId: 'F', status: 'failed', error: 'x', syncedAt: null } });
+    expect(repo.driveQueue('F').map((c) => c.id)).toEqual(['t1', 't2', 'failed']);
+    expect(repo.driveQueueCount('F')).toBe(3);
+  });
+  test('a clip synced to another folder is queued again', () => {
+    repo.insert(clip('done', { status: 'taken' }));
+    repo.update('done', { drive: synced('A') });
+    expect(repo.driveQueue('A')).toEqual([]);
+    expect(repo.driveQueue('B').map((c) => c.id)).toEqual(['done']);
+  });
+});
+
+test('publicClip hides local paths and Drive ids, and links to the uploaded file', async () => {
+  const { publicClip } = await import('../../src/service/http');
+  const plain = publicClip(clip('a'));
+  expect('mp4Path' in plain || 'jsonPath' in plain).toBe(false);
+  expect(plain.drive).toBeNull();
+  const up = publicClip(clip('b', { drive: { fileId: 'F 1', folderId: 'D', status: 'synced', error: null, syncedAt: 'x' } }));
+  expect(up.drive).toEqual({ status: 'synced', error: null, url: 'https://drive.google.com/file/d/F%201/view' });
+  expect(JSON.stringify(up)).not.toContain('folderId');
+  expect(publicClip(clip('c', { drive: { fileId: null, folderId: 'D', status: 'failed', error: 'нет сети', syncedAt: null } })).drive)
+    .toEqual({ status: 'failed', error: 'нет сети', url: null });
+});

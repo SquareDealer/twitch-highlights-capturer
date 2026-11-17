@@ -6,7 +6,8 @@ import { ClipCard } from '../../src/web/components/ClipCard';
 const setClipStatus = vi.fn();
 vi.mock('../../src/web/api', () => ({ api: { setClipStatus: (...a: unknown[]) => setClipStatus(...a) } }));
 
-const clip = (over: Partial<FeedClip> = {}): FeedClip => ({
+type CardClip = Omit<FeedClip, 'drive'> & { drive?: { status: 'synced' | 'failed'; url: string | null; error: string | null } | null };
+const clip = (over: Partial<CardClip> = {}): CardClip => ({
   id: 'c1', sessionId: 's', streamer: 'shroud', streamId: 'x', epoch: 0, startMs: 0, endMs: 38000, durationMs: 38000, bytes: 1,
   triggers: ['laugh', 'audio'], confidence: 'normal', score: 4.3,
   signals: { chatSpike: 5.2, laughShare: 0.61, reactionShare: 0, deltaDb: 14 },

@@ -5,7 +5,8 @@ import type { ProfileSettings } from '../service/profileSettings';
 import type { TuningEntry } from '../service/tuningLog';
 import type { DetectorSignals } from '../service/detectorProcess';
 
-export type PublicClip = Omit<FeedClip, 'mp4Path' | 'jsonPath'>;
+export interface PublicClipDrive { status: 'synced' | 'failed'; url: string | null; error: string | null }
+export type PublicClip = Omit<FeedClip, 'mp4Path' | 'jsonPath' | 'drive'> & { drive?: PublicClipDrive | null };
 
 let onUnauthorized: (() => void) | undefined;
 /** Called when any regular API call (except the login attempt itself) answers 401. */

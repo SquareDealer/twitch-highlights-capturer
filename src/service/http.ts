@@ -49,7 +49,13 @@ function decodeParam(v: string): string {
   }
 }
 
-export const publicClip = ({ mp4Path: _m, jsonPath: _j, ...rest }: FeedClip) => rest;
+/** What the browser gets: no local paths, and of the Drive state only what the card shows. */
+export const publicClip = ({ mp4Path: _m, jsonPath: _j, drive, ...rest }: FeedClip) => ({
+  ...rest,
+  drive: drive
+    ? { status: drive.status, error: drive.error, url: drive.status === 'synced' && drive.fileId ? `https://drive.google.com/file/d/${encodeURIComponent(drive.fileId)}/view` : null }
+    : null,
+});
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const data = Buffer.from(JSON.stringify(body));

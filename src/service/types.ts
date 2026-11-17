@@ -24,6 +24,15 @@ export interface DetectorEvent {
     laughShare: number; reactionShare: number; deltaDb: number };
 }
 
+/** Where the clip stands with Google Drive. `folderId`: the folder the attempt was made for. */
+export interface ClipDrive {
+  fileId: string | null;
+  folderId: string;
+  status: 'synced' | 'failed';
+  error: string | null;
+  syncedAt: string | null;
+}
+
 export interface FeedClip {
   id: string;
   sessionId: string;
@@ -47,4 +56,6 @@ export interface FeedClip {
   statusChangedAt: string | null;
   profileId: string | null;     // null: manual clip or clip made before profiles
   profileName: string | null;
+  /** Absent until an upload to Google Drive is tried. */
+  drive?: ClipDrive;
 }
