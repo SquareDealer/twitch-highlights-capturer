@@ -167,25 +167,8 @@ def test_trigger_counts_laugh_and_reaction():
     assert f.trigger_authors == 4
 
 
-def test_active_authors_over_300s():
-    a = ChatAnalyzer(CFG)
-    now = 400_000
-    for i in range(30):
-        a.add(ChatMessage(now - 200_000 - i * 1000, f"old{i}", "привет"))
-    for i in range(5):
-        a.add(ChatMessage(now - 310_000 - i, f"gone{i}", "привет"))
-    for i in range(4):
-        a.add(ChatMessage(now - 1000 - i, f"old{i}", "ахах"))
-    f = a.tick(now)
-    assert f.active_authors == 30
-    assert f.trigger_share == f.trigger_authors / 30
 
 
-def test_active_authors_floor():
-    a = ChatAnalyzer(CFG)
-    f = _window(a, [("a", "хаха"), ("a", "хаха"), ("b", "хаха"), ("b", "хаха")])
-    assert f.active_authors == 10
-    assert f.trigger_share == 0.2
 
 
 def test_one_author_counts_once():
@@ -260,14 +243,6 @@ def test_new_dictionary_applies_to_new_messages_only():
     assert a.tick(1000).laugh_messages == 1
 
 
-def test_active_authors_follow_active_window_after_reconfigure():
-    a = ChatAnalyzer(cfg_with(minActive=1))
-    for i in range(20):  # 20 authors over 300 s
-        a.add(ChatMessage(i * 15_000, f"u{i}", "привет"))
-        a.tick(i * 15_000)
-    assert a.tick(299_000).active_authors == 20
-    a.reconfigure(cfg_with(minActive=1, activeWindowS=30))
-    assert a.tick(300_000).active_authors == 2  # only u18 (270 s) and u19 (285 s) wrote in the last 30 s
 
 
 def test_unsafe_pattern_is_never_run_and_is_reported():
@@ -279,10 +254,23 @@ def test_unsafe_pattern_is_never_run_and_is_reported():
     assert time.time() - t0 < 0.5
 
 
-def test_frame_reports_baseline_and_raw_active():
-    a = ChatAnalyzer(CFG); run_base(a, 6); f = a.tick(120_000)
-    assert 5 <= f.baseline <= 7 and f.active_authors_raw == 6 and f.active_authors == 10
 
 
 def test_pattern_with_a_quantifier_too_large_for_python_is_reported_not_raised():
     assert bad_patterns(["ха{99999999999}", "^lol$"]) == ["ха{99999999999}"]
+
+
+def test_trigger_share_is_share_of_messages():
+    a = ChatAnalyzer(CFG)
+    f = _window(a, [("u0", "ахах"), ("u1", "KEKW"), ("u2", "НЕЕЕТ"), ("u3", "привет")])
+    assert f.trigger_share == 0.75
+
+
+def test_trigger_share_zero_on_empty_window():
+    f = ChatAnalyzer(CFG).tick(100_000)
+    assert f.messages == 0 and f.trigger_share == 0.0
+
+
+def test_frame_reports_baseline():
+    a = ChatAnalyzer(CFG); run_base(a, 6); f = a.tick(120_000)
+    assert 5 <= f.baseline <= 7

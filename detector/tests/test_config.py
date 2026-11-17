@@ -14,7 +14,10 @@ def test_load_config_ignores_unknown_keys(tmp_path):
 
 
 def test_defaults_have_new_keys():
-    assert DEFAULTS["chat"]["minTriggerShare"] == 0.05
+    assert DEFAULTS["chat"]["minSpike"] == 2.0
+    assert DEFAULTS["chat"]["minTriggerShare"] == 0.5
+    assert DEFAULTS["score"]["shareFull"] == 0.9
+    assert "minActive" not in DEFAULTS["chat"] and "activeWindowS" not in DEFAULTS["chat"]
     assert DEFAULTS["score"]["spikeFull"] == 6
 
 
@@ -37,7 +40,7 @@ def test_old_trigger_keys_are_gone_from_defaults():
 def test_overlay_replaces_known_keys_only():
     out = overlay(DEFAULTS, {"chat": {"minTriggerShare": 0.2, "nope": 1}, "weights": {}})
     assert out["chat"]["minTriggerShare"] == 0.2 and "nope" not in out["chat"] and "weights" not in out
-    assert DEFAULTS["chat"]["minTriggerShare"] == 0.05  # base unchanged
+    assert DEFAULTS["chat"]["minTriggerShare"] == 0.5  # base unchanged
 
 
 @pytest.mark.parametrize("bad", [None, [], {"chat": 5}, {"chat": {"windowS": "5"}}, {"chat": {"windowS": True}},
@@ -53,7 +56,7 @@ def test_unsafe_pattern():
     assert [unsafe_pattern(p) for p in ["^pog(gers|champ)?$", "^[ах]*ха[ах]*$", r"^\d+$"]] == [False] * 3
 
 
-@pytest.mark.parametrize("section,key", [("chat", "windowS"), ("chat", "baselineS"), ("chat", "activeWindowS"),
+@pytest.mark.parametrize("section,key", [("chat", "windowS"), ("chat", "baselineS"),
                                          ("chat", "alpha"), ("audio", "baselineS")])
 def test_overlay_rejects_non_positive_windows_and_alpha(section, key):
     for bad in (0, -1):

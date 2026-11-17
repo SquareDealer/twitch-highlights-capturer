@@ -92,7 +92,7 @@ def test_main_emits_event_for_scripted_input():
     assert ev["triggers"] == ["laugh", "audio"] and ev["confidence"] == "normal"
     assert 79_900 <= ev["startMs"] <= 80_100 and ev["triggerTimeMs"] == 82_000
     assert set(ev["scores"]) == {"total", "share", "speed", "audio"} and 1 <= ev["scores"]["total"] <= 10
-    assert ev["signals"]["triggerMessages"] == 4 and ev["signals"]["activeAuthors"] == 10
+    assert ev["signals"]["triggerMessages"] == 4 and ev["signals"]["triggerShare"] == 1.0
     assert sum(1 for l in lines if l["type"] == "signals") >= 90
     assert any(l["type"] == "signals" and l["warm"] for l in lines)
 
@@ -106,9 +106,9 @@ def test_main_voice_spike_without_chat_creates_no_event():
 def test_main_signals_line_has_trigger_fields():
     lines = run_chat(pcm_frames(speech(70)), LAUGHS, pcm_frames(speech(3)) + ctl({"type": "stop"}))
     sig = [l for l in lines if l["type"] == "signals"]
-    assert all({"triggerShare", "triggerMessages", "activeAuthors"} <= set(s) for s in sig)
+    assert all({"triggerShare", "triggerMessages"} <= set(s) and "activeAuthors" not in s for s in sig)
     s = [s for s in sig if s["tMs"] == 72000][0]
-    assert (s["triggerMessages"], s["activeAuthors"], s["triggerShare"]) == (4, 10, 0.4)
+    assert (s["triggerMessages"], s["triggerShare"]) == (4, 1.0)
     assert s["messages"] == 4 and s["laughShare"] == 1.0
 
 
@@ -308,14 +308,15 @@ def test_config_frame_is_acknowledged_and_applied_without_reset():
 
 
 def test_config_frame_before_epoch_is_used_by_the_new_chat_analyzer():
-    before = pcm_frames(speech(3)) + CONFIG(5, minActive=20) + ctl({"type": "epoch", "epoch": 1}) + pcm_frames(speech(70))
+    before = pcm_frames(speech(3)) + CONFIG(5, minSpike=50) + ctl({"type": "epoch", "epoch": 1}) + pcm_frames(speech(70))
     lines = run_chat(before, LAUGHS, pcm_frames(speech(3)) + ctl({"type": "stop"}))
     assert {"type": "config", "version": 5, "badPatterns": []} in lines
     sig = _sig(lines)
     split = next(k for k in range(1, len(sig)) if sig[k]["tMs"] < sig[k - 1]["tMs"])
-    assert all(s["activeAuthors"] == 20 for s in sig[split:])  # the default minActive is 10
     s = [s for s in sig[split:] if s["tMs"] == 72000][0]
-    assert (s["triggerMessages"], s["triggerShare"]) == (4, 0.2)
+    assert (s["triggerMessages"], s["triggerShare"]) == (4, 1.0)
+    assert s["detail"]["conditions"]["spike"] is False  # the default minSpike 2 would hold here
+    assert _events(lines) == []
 
 
 def test_bad_patterns_are_returned():
@@ -342,8 +343,9 @@ def test_signals_line_carries_detail():
     lines = run_chat(pcm_frames(speech(70)) + CONFIG(7), LAUGHS, pcm_frames(speech(3)) + ctl({"type": "stop"}))
     d = [l for l in lines if l["type"] == "signals" and l["tMs"] == 72000][0]["detail"]
     assert d["configVersion"] == 7 and d["sinceStartMs"] == 72000
-    assert (d["chat"]["triggerMessages"], d["chat"]["triggerAuthors"], d["chat"]["activeAuthors"], d["chat"]["activeAuthorsRaw"]) == (4, 4, 10, 4)
-    assert d["conditions"] == {"warm": True, "messages": True, "authors": True, "share": True, "fired": True}
+    assert (d["chat"]["triggerMessages"], d["chat"]["triggerAuthors"], d["chat"]["messages"], d["chat"]["triggerShare"]) == (4, 4, 4, 1.0)
+    assert "activeAuthors" not in d["chat"]
+    assert d["conditions"] == {"warm": True, "spike": True, "messages": True, "authors": True, "share": True, "fired": True}
     assert d["event"]["chatOpen"] is True and d["score"]["total"] >= 1
     assert set(d["audio"]) == {"db", "baselineDb", "deltaDb", "vad", "warm", "spiking"}
 

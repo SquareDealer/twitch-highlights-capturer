@@ -1,4 +1,4 @@
-"""Relative chat trigger, event assembly and the 1-10 score."""
+"""Chat trigger (a speed spike made of trigger messages), event assembly and the 1-10 score."""
 import logging
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -62,7 +62,7 @@ class _Open:
     chat_spike: float = 0.0
     trigger_share: float = 0.0
     trigger_messages: int = 0
-    active_authors: int = 0
+    messages: int = 0
     laugh: float = 0.0
     reaction: float = 0.0
 
@@ -113,8 +113,10 @@ class EventAssembler:
 
     def _score(self, o: _Open, delta_db: float) -> dict:
         c, s = self.c, self.s
-        share = round(_lin(o.trigger_share, c["minTriggerShare"], s["shareFull"], 5), 1)
-        speed = round(_lin(o.chat_spike, 1, s["spikeFull"], 3), 1)
+        # an event that never fired (preview of a second that does not fire) scores no chat points
+        fired = o.chat_spike >= c["minSpike"] and o.trigger_share >= c["minTriggerShare"]
+        share = round(_lin(o.trigger_share, c["minTriggerShare"], s["shareFull"], 3), 1) if fired else 0.0
+        speed = round(_lin(o.chat_spike, c["minSpike"], s["spikeFull"], 5), 1) if fired else 0.0
         audio = round(_lin(delta_db, s["audioMinDb"], s["audioFullDb"], 1), 1)
         total = round(min(10.0, 1 + share + speed + audio), 1)
         return {"total": total, "share": share, "speed": speed, "audio": audio}
@@ -133,19 +135,22 @@ class EventAssembler:
             confidence="low" if o.lagged else "normal", scores=scores,
             signals={
                 "chatSpike": round(o.chat_spike, 3), "triggerShare": round(o.trigger_share, 3),
-                "triggerMessages": o.trigger_messages, "activeAuthors": o.active_authors,
+                "triggerMessages": o.trigger_messages, "messages": o.messages,
                 "laughShare": round(o.laugh, 3), "reactionShare": round(o.reaction, 3), "deltaDb": round(delta_db, 3),
             },
         )
 
     @staticmethod
-    def _chat_feed(o: _Open, f: ChatFrame) -> None:
+    def _chat_feed(o: _Open, f: ChatFrame, fired: bool) -> None:
+        """Tail seconds (kept open by speed alone) extend the event but never raise its score:
+        one laugh in a quiet window would otherwise read as a 100 % share."""
         o.laugh_messages += f.laugh_messages
         o.reaction_messages += f.reaction_messages
-        o.chat_spike = max(o.chat_spike, f.spike)
-        o.trigger_share = max(o.trigger_share, f.trigger_share)
-        o.trigger_messages = max(o.trigger_messages, f.trigger_messages)
-        o.active_authors = max(o.active_authors, f.active_authors)
+        if fired:
+            o.chat_spike = max(o.chat_spike, f.spike)
+            o.trigger_share = max(o.trigger_share, f.trigger_share)
+            o.trigger_messages = max(o.trigger_messages, f.trigger_messages)
+            o.messages = max(o.messages, f.messages)
         o.laugh = max(o.laugh, f.laugh_share)
         o.reaction = max(o.reaction, f.reaction_share)
 
@@ -165,15 +170,20 @@ class EventAssembler:
         """The trigger rule's parts for this frame: what holds and what is missing."""
         c, e = self.c, self.e
         warm = int(now_ms) - self.start_ms >= int(e["warmupS"]) * 1000 and frame.warm
+        spike_ok = frame.spike >= c["minSpike"]
         enough = frame.trigger_messages >= c["minTriggerMessages"]
         authors_ok = frame.trigger_authors >= c["minTriggerAuthors"]
-        share_ok = frame.trigger_share >= c["minTriggerShare"]
-        return {"warm": warm, "messages": enough, "authors": authors_ok, "share": share_ok,
-                "fired": warm and enough and authors_ok and share_ok}
+        share_ok = frame.messages > 0 and frame.trigger_share >= c["minTriggerShare"]
+        return {"warm": warm, "spike": spike_ok, "messages": enough, "authors": authors_ok, "share": share_ok,
+                "fired": warm and spike_ok and enough and authors_ok and share_ok}
 
     def preview(self, frame: ChatFrame, delta_db: float) -> dict:
-        """The score of this one second alone, by the same formula as an event's."""
-        o = _Open(self.epoch, 0, 0, 0, 0, chat_spike=frame.spike, trigger_share=frame.trigger_share)
+        """The score of this one second alone, by the same formula as an event's; a second whose
+        chat conditions do not hold scores no chat points."""
+        c = self.conditions(self.start_ms + int(self.e["warmupS"]) * 1000, frame)
+        ok = c["spike"] and c["messages"] and c["authors"] and c["share"]
+        o = _Open(self.epoch, 0, 0, 0, 0, chat_spike=frame.spike if ok else 0.0,
+                  trigger_share=frame.trigger_share if ok else 0.0)
         return self._score(o, delta_db)
 
     def open_state(self, now_ms: int) -> Optional[dict]:
@@ -194,7 +204,7 @@ class EventAssembler:
         events: list = []
         near: list = []
         cond = self.conditions(now, frame)
-        warm, enough, authors_ok, share_ok, fired = (cond[k] for k in ("warm", "messages", "authors", "share", "fired"))
+        fired = cond["fired"]
 
         if fired and self.on_chat_spike:
             try:
@@ -202,13 +212,17 @@ class EventAssembler:
             except Exception:
                 log.exception("on_chat_spike failed")
 
-        # near-miss: enough trigger messages, but something else is missing
-        if enough and not fired and not (self._cur and self._cur.chat_open):
-            missing = [k for k, ok in (("warm", warm), ("authors", authors_ok), ("share", share_ok)) if not ok]
+        # near-miss: half of the rule holds. Either the spike is there and something else is missing, or the
+        # composition is there and the speed is close (between endSpike and minSpike); without that lower
+        # bound a steadily laughing chat would write an entry every 10 s forever.
+        composed = cond["messages"] and cond["authors"] and cond["share"]
+        close = composed and not cond["spike"] and frame.spike >= c["endSpike"]
+        if (cond["spike"] or close) and not fired and not (self._cur and self._cur.chat_open):
+            missing = [k for k in ("warm", "spike", "share", "messages", "authors") if not cond[k]]
             if self._nm_ok("chat", now):
                 near.append(NearMiss(now, "chat", missing, {
-                    "spike": round(frame.spike, 3), "triggerMessages": frame.trigger_messages,
-                    "triggerAuthors": frame.trigger_authors, "activeAuthors": frame.active_authors,
+                    "spike": round(frame.spike, 3), "messages": frame.messages,
+                    "triggerMessages": frame.trigger_messages, "triggerAuthors": frame.trigger_authors,
                     "triggerShare": round(frame.trigger_share, 3),
                 }))
 
@@ -227,11 +241,11 @@ class EventAssembler:
                 self._see(o, recent_spikes(start - int(e["voiceWindowS"] * 1000), now))
             o.chat_open = True
             o.end_ms = max(o.end_ms, now)
-            self._chat_feed(o, frame)
+            self._chat_feed(o, frame, True)
         elif o is not None and o.chat_open:
             o.end_ms = max(o.end_ms, now)
             if frame.spike >= c["endSpike"]:
-                self._chat_feed(o, frame)
+                self._chat_feed(o, frame, False)
             else:
                 o.chat_open = False
         if o is not None:
